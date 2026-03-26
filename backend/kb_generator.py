@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import urllib.request
+import urllib.parse
+from pathlib import Path
+from datetime import datetime
+
+KNOWLEDGE_SOURCE_URLS = [
+    "https://csrc.nist.gov/projects/post-quantum-cryptography",
+    "https://en.wikipedia.org/wiki/Post-quantum_cryptography",
+    "https://www.ssllabs.com/projects/best-practices/index.html"
+]
+
+def generate_offline_kb():
+    """
+    In a real-world scenario, this would use BeautifulSoup or a headless browser.
+    For this prototype, we'll populate it with high-quality pre-defined technical answers
+    and a mechanism to load external JSON if present.
+    """
+
+    kb = {
+        "metadata": {
+            "version": "1.2.0-enhanced",
+            "last_updated": datetime.now().isoformat(),
+            "description": "Fused offline knowledge base for QuantHunt AI (Quantum + Social + General)"
+        },
+        "entries": {
+            "general_conversation": {
+                "who am i": "You are a user interacting with QuantHunt AI, the AI security core of the Quanthunt platform.",
+                "how are you": "I am operating at full capacity, continuously monitoring for quantum-risk vectors and providing PQC transition insights.",
+                "what is the meaning of life": "In the context of cryptography, the meaning of life might be 42, but in the context of security, it's ensuring your data remains secret for as long as it matters (T_w).",
+                "hello": "Greetings! I am QuantHunt AI. I can help you with quantum-risk analysis, TLS posture, or just a general chat about cryptography.",
+                "hi": "Hello there! How can I assist you in securing your assets against quantum threats today?",
+                "hey": "Hey! Ready to dive into some CBOM generation or HNDL risk scoring?",
+                "what can you do": "I can analyze scan results, predict risk drift, explain PQC concepts like ML-KEM and ML-DSA, and help you build a remediation roadmap.",
+                "are you real": "I am a sophisticated AI assistant running within the Quanthunt ecosystem, designed to provide expert-level cybersecurity guidance.",
+                "tell me a joke": "Why did the RSA key cross the road? To get to the other side... of the quantum computer. (Don't worry, ML-KEM is much better at staying on this side.)",
+                "what is your name": "My name is QuantHunt AI. I am the intelligence layer of Quanthunt.",
+                "who made you": "I was developed as part of the Quanthunt project to simplify the complex transition to post-quantum cryptography.",
+                "good morning": "Good morning! Ready to audit some TLS 1.3 implementations?",
+                "good afternoon": "Good afternoon! Hope your certificate inventory is going well.",
+                "good evening": "Good evening! A perfect time to review your HNDL risk scores.",
+                "thank you": "You're very welcome! Let me know if you need anything else.",
+                "thanks": "No problem! I'm here to help with your quantum-readiness journey."
+            },
+            "pqc_knowledge": {
+                "pqc": "Post-Quantum Cryptography (PQC) refers to cryptographic algorithms (usually public-key) that are thought to be secure against an attack by a quantum computer. As of 2024, NIST has standardized several algorithms including ML-KEM (Kyber) and ML-DSA (Dilithium).",
+                "hndl": "Harvest Now, Decrypt Later (HNDL) is a surveillance strategy where encrypted data is collected today by adversaries with the expectation that it can be decrypted in the future using a cryptographically relevant quantum computer (CRQC).",
+                "quantum_supremacy": "Quantum supremacy is the goal of demonstrating that a programmable quantum device can solve a problem that no classical computer can solve in any feasible amount of time.",
+                "shors_algorithm": "Shor's algorithm is a quantum algorithm for integer factorization, which can break RSA and ECC encryption. This is the primary driver for the migration to PQC.",
+                "grovers_algorithm": "Grover's algorithm provides a quadratic speedup for unstructured search, effectively halving the security strength of symmetric keys (e.g., AES-256 provides 128-bit security against Grover's)."
+            },
+            "technical": {
+                "tls_1_3": "TLS 1.3 is the latest version of the Transport Layer Security protocol. It simplifies the handshake and removes legacy, insecure ciphers like RSA key exchange in favor of (perfect) forward secrecy via Diffie-Hellman or Elliptic Curves.",
+                "ml_kem": "ML-KEM (Module-Lattice-Based Key-Encapsulation Mechanism) is the NIST FIPS 203 standard based on the Kyber algorithm. It is used for secure key exchange in a post-quantum world.",
+                "ml_dsa": "ML-DSA (Module-Lattice-Based Digital Signature Algorithm) is the NIST FIPS 204 standard based on the Dilithium algorithm. It provides quantum-resistant digital signatures.",
+                "hybrid_key_exchange": "A hybrid key exchange combines a classical algorithm (like X25519) with a post-quantum algorithm (like ML-KEM-768). This ensures security as long as at least one of the underlying algorithms remains unbroken.",
+                "fips_140_3": "FIPS 140-3 is the current US government standard for validating cryptographic modules. It now includes requirements for PQC transition readiness."
+            },
+            "domain_specific": {
+                "cbom": "A Cryptography Bill of Materials (CBOM) is a specialized SBOM that lists all cryptographic assets, algorithms, keys, and certificates used in an application. It is essential for managing crypto-agility and PQC migration.",
+                "hndl_score": "The HNDL Risk Score in Quanthunt is a weighted metric (0-100) combining key exchange strength (45%), authentication (25%), TLS version (15%), certificate profile (10%), and symmetric ciphers (5%). Lower is better.",
+                "quantum_readiness_level": "QRL is a measure of how prepared an organization is for the quantum threat, ranging from inventory (Level 1) to full PQC deployment (Level 5).",
+                "wait_time": "In the context of PQC, Wait-time (T_w) refers to how long data must remain secret. If T_w + T_migration > T_quantum (the time until a CRQC exists), your data is at risk.",
+                "remediation_roadmap": "A typical PQC roadmap involves: 1. Inventory (CBOM), 2. Risk Assessment (HNDL Scoring), 3. Hybrid Pilot, 4. Full Migration, 5. Continuous Monitoring."
+            },
+            "fused_datasets": {
+                "is quantum computing real": "Yes, quantum computing is a real and rapidly advancing field. While large-scale cryptographically relevant quantum computers (CRQCs) don't exist yet, small-scale systems are already in use for research.",
+                "when will quantum computers arrive": "Estimates vary, but many experts suggest a CRQC could emerge within the next 10 to 15 years. This is why the 'Wait-time' (T_w) is so critical today.",
+                "can quantum computers break block chain": "Quantum computers could potentially break the ECC and RSA signatures used in many blockchains. However, PQC algorithms can be integrated to secure them.",
+                "what is a qubit": "A qubit (quantum bit) is the basic unit of quantum information. Unlike a classical bit (0 or 1), a qubit can exist in a superposition of both states.",
+                "what is entanglement": "Quantum entanglement is a phenomenon where two or more particles become connected such that the state of one instantly influences the state of the other, regardless of distance.",
+                "what is superposition": "Superposition is a fundamental principle of quantum mechanics where a physical system exists in multiple states simultaneously until it is measured.",
+                "is ai safe": "AI safety depends on how it is developed and deployed. In Quanthunt, we use AI to help humans navigate complex security transitions more effectively.",
+                "can you write code": "I can help you with code snippets related to PQC integration, CBOM parsing, and TLS configuration.",
+                "what is cryptography": "Cryptography is the practice and study of techniques for secure communication in the presence of adversarial behavior.",
+                "who is satoshi nakamoto": "Satoshi Nakamoto is the name used by the presumed pseudonymous person or persons who developed bitcoin and authored the original whitepaper."
+            }
+        }
+    }
+
+    output_path = Path("backend/offline_kb.json")
+    with open(output_path, "w") as f:
+        json.dump(kb, f, indent=2)
+
+    def mock_crawl(url: str):
+
+        print(f"Placeholder: Mock-crawled {url}, extracting PQC keywords...")
+        return {"keywords": ["lattice", "encryption", "quantum-ready"]}
+
+    for url in KNOWLEDGE_SOURCE_URLS:
+        mock_crawl(url)
+
+    print(f"Offline KB generated at {output_path}")
+
+if __name__ == "__main__":
+    generate_offline_kb()

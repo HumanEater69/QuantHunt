@@ -1,0 +1,60 @@
+QuantHunt Debug Log
+Date: 2026-03-26
+Scope: Deep clean smoke + pytest + workspace diagnostics
+
+1) Production-like smoke run
+Command: scripts\deep-clean.cmd --scan-timeout 300 --port 8014
+Result: PASS
+Summary:
+- Base URL: http://127.0.0.1:8014
+- Standalone scan: pnb.bank.in (completed)
+- Fleet scans: pnb.bank.in (completed), axis.bank.in (completed)
+- Elapsed: 36.9s
+
+Runtime server logs:
+- Source: runlogs\deep-clean-8014.out.log
+- Source: runlogs\deep-clean-8014.err.log
+- Observed: HTTP 200 for /api/network-status, /api/scan, /api/scan/{id}, /api/scan/batch
+- Observed: No 5xx errors in captured output
+
+2) Test execution (first pass)
+Command: .venv\Scripts\python.exe -m pytest -q
+Result: FAILED at collection
+Primary bug encountered:
+- Type: PermissionError (WinError 5)
+- Location: runlogs\tmpn4d_k9pg
+- Effect: Test run interrupted during collection
+
+3) Test execution (strict pass excluding runtime artifacts)
+Command: .venv\Scripts\python.exe -m pytest -q --ignore=runlogs
+Result: PASS
+Summary:
+- 19 passed
+- 2 warnings
+
+4) Warnings encountered
+Type: DeprecationWarning
+Details:
+- backend\main.py:490 uses FastAPI on_event startup hook (deprecated; lifespan events recommended)
+- fastapi\applications.py:4495 warning cascade from on_event usage
+
+5) Workspace diagnostics (Problems API)
+Command source: get_errors(c:\Users\akula\cyber)
+Result summary:
+- Large number of style diagnostics in frontend\app.jsx
+- Category observed repeatedly: "CSS inline styles should not be used, move styles to an external CSS file"
+- Note: This appears to be policy/lint style enforcement rather than runtime crash behavior
+
+6) Frontend text fix done in same session
+- TTFB_HYBRID -> TOTAL_TTFB
+- Formula label updated to: TOTAL_TTFB = T_crypto + T_prop + T_loss
+
+Recommended follow-up bug backlog:
+- Exclude runlogs/ from default pytest collection in config to prevent Windows permission collection failures.
+- Migrate FastAPI startup/shutdown to lifespan handlers to remove deprecation warnings.
+- Decide whether to suppress or remediate inline-style lint policy in frontend\app.jsx.
+
+7) Remediation applied in this run
+- Added pytest.ini with norecursedirs for runlogs and .venv
+- Re-ran full pytest (without --ignore)
+- Validation result: 19 passed, 2 warnings, 0 collection errors

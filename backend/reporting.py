@@ -11,7 +11,6 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
-
 def build_scan_pdf(scan: dict) -> bytes:
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -137,14 +136,12 @@ def build_scan_pdf(scan: dict) -> bytes:
     buf.seek(0)
     return buf.read()
 
-
 def readiness_label(avg_risk: float) -> str:
     if avg_risk <= 60:
-        return "Fully Quantum Safe"
+        return "Quantum-Safe"
     if avg_risk <= 80:
         return "PQC Ready"
     return "CRITICAL EXPOSURE"
-
 
 def _draw_optional_image(c: canvas.Canvas, env_var: str, x: float, y: float, width: float, height: float) -> bool:
     raw_path = (os.getenv(env_var) or "").strip()
@@ -159,7 +156,6 @@ def _draw_optional_image(c: canvas.Canvas, env_var: str, x: float, y: float, wid
         return True
     except Exception:
         return False
-
 
 def _draw_gold_seal(c: canvas.Canvas, cx: float, cy: float, radius: float, text: str) -> None:
     c.setFillColor(colors.HexColor("#d1aa46"))
@@ -176,7 +172,6 @@ def _draw_gold_seal(c: canvas.Canvas, cx: float, cy: float, radius: float, text:
     c.setFont("Helvetica", 6)
     c.drawCentredString(cx, cy - 8, text[:26])
 
-
 def _draw_watermark(c: canvas.Canvas, w: float, h: float, text: str) -> None:
     c.saveState()
     c.translate(w * 0.56, h * 0.46)
@@ -185,7 +180,6 @@ def _draw_watermark(c: canvas.Canvas, w: float, h: float, text: str) -> None:
     c.setFont("Helvetica-Bold", 54)
     c.drawCentredString(0, 0, text)
     c.restoreState()
-
 
 def _draw_logo_watermark(c: canvas.Canvas, w: float, h: float, env_var: str, fallback_text: str, opacity: float = 0.08) -> None:
     path = (os.getenv(env_var) or "").strip()
@@ -204,7 +198,6 @@ def _draw_logo_watermark(c: canvas.Canvas, w: float, h: float, env_var: str, fal
             pass
     _draw_watermark(c, w, h, fallback_text)
 
-
 def _wrap_text_by_width(c: canvas.Canvas, text: str, max_width: float, font_name: str, font_size: float) -> list[str]:
     words = str(text or "").split()
     if not words:
@@ -221,9 +214,8 @@ def _wrap_text_by_width(c: canvas.Canvas, text: str, max_width: float, font_name
     lines.append(current)
     return lines
 
-
 def _draw_report_signature(c: canvas.Canvas, page_width: float, page_number: int | None = None) -> None:
-    team_name = (os.getenv("QH_TEAM_NAME") or "Quanthunt Security Team").strip()
+    team_name = (os.getenv("QH_TEAM_NAME") or "QuantHunt Security Team").strip()
     sig_text = (os.getenv("QH_TEAM_SIGNATURE") or team_name).strip()
     sig_path = (os.getenv("QH_CERT_SIGNATURE_PATH") or "").strip()
     c.setStrokeColor(colors.HexColor("#bda66f"))
@@ -243,7 +235,6 @@ def _draw_report_signature(c: canvas.Canvas, page_width: float, page_number: int
         c.setFont("Times-Italic", 15)
         c.setFillColor(colors.HexColor("#7a6541"))
         c.drawRightString(page_width - 56, 66, sig_text)
-
 
 def _fit_text(c: canvas.Canvas, text: str, font_name: str, font_size: float, max_width: float) -> str:
     value = str(text or "")
@@ -265,7 +256,6 @@ def _fit_text(c: canvas.Canvas, text: str, font_name: str, font_size: float, max
             high = mid - 1
     return value[:low] + ellipsis
 
-
 def build_quantum_certificate(scan: dict, avg_risk: float) -> bytes:
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=landscape(A4))
@@ -284,152 +274,88 @@ def build_quantum_certificate(scan: dict, avg_risk: float) -> bytes:
     c.rect(0, 0, w, h, fill=1, stroke=0)
     c.setFillColor(colors.HexColor("#efe2c7"))
     c.roundRect(inner_x, inner_y, inner_w, inner_h, 18, fill=1, stroke=0)
+
     c.setStrokeColor(colors.HexColor("#c8a867"))
     c.setLineWidth(1.8)
     c.roundRect(inner_x + 8, inner_y + 8, inner_w - 16, inner_h - 16, 16, fill=0, stroke=1)
+
+    c.setLineWidth(0.5)
+    c.roundRect(inner_x + 12, inner_y + 12, inner_w - 24, inner_h - 24, 12, fill=0, stroke=1)
+
     _draw_logo_watermark(c, w, h, "QH_CERT_LOGO_PATH", "QUANTHUNT CERTIFIED", opacity=0.09)
 
-    top = h - 76
+    top = h - 100
+
     c.setFillColor(colors.HexColor("#6d541f"))
-    c.setFont("Times-Bold", 32)
-    c.drawCentredString(w / 2, top, "QUANTHUNT QUANTUM READINESS CERTIFICATE")
+    c.setFont("Times-Bold", 36)
+    c.drawCentredString(w / 2, top, "CERTIFICATE OF PQC READINESS")
+
     c.setFillColor(colors.HexColor("#8d6e31"))
-    c.setFont("Helvetica", 11)
-    c.drawCentredString(w / 2, top - 22, "Cyber PQC Posture Assessment")
-    c.setFont("Helvetica", 9)
-    c.drawCentredString(w / 2, top - 36, f"Issued {issued_at.strftime('%d %b %Y')}  |  Valid through {valid_until.strftime('%d %b %Y')}")
+    c.setFont("Times-Italic", 15)
+    c.drawCentredString(w / 2, top - 32, "This certificate acknowledges that the domain")
 
-    # Optional organization logo in the title row.
-    logo_drawn = _draw_optional_image(c, "QH_CERT_LOGO_PATH", inner_x + 22, h - 102, 58, 58)
-    if not logo_drawn:
-        c.setStrokeColor(colors.HexColor("#c0a367"))
-        c.setLineWidth(1)
-        c.circle(inner_x + 50, h - 72, 18, fill=0, stroke=1)
-        c.setFont("Helvetica-Bold", 10)
-        c.setFillColor(colors.HexColor("#816227"))
-        c.drawCentredString(inner_x + 50, h - 75, "QH")
-
-    # Left information panel
-    panel_x = inner_x + 28
-    panel_y = inner_y + 124
-    panel_w = inner_w * 0.62
-    panel_h = inner_h - 198
-    c.setFillColor(colors.HexColor("#f9f0dc"))
-    c.roundRect(panel_x, panel_y, panel_w, panel_h, 12, fill=1, stroke=0)
-    c.setStrokeColor(colors.HexColor("#d3ba86"))
-    c.setLineWidth(1)
-    c.roundRect(panel_x, panel_y, panel_w, panel_h, 12, fill=0, stroke=1)
-
-    label_right_x = panel_x + 152
-    value_x = label_right_x + 12
-    field_value_max = panel_x + panel_w - 20 - value_x
-
-    info_y = panel_y + panel_h - 36
     c.setFillColor(colors.HexColor("#654f1f"))
-    c.setFont("Helvetica-Bold", 12)
-    c.drawRightString(label_right_x, info_y, "Certified Domain")
-    c.setFont("Times-Bold", 16)
-    domain_text = _fit_text(c, str(scan.get("domain", "unknown")), "Times-Bold", 16, field_value_max)
-    c.drawString(value_x, info_y, domain_text)
+    c.setFont("Times-Bold", 32)
+    c.drawCentredString(w / 2, top - 75, str(scan.get("domain", "unknown")))
 
-    info_y -= 28
-    c.setFont("Helvetica-Bold", 11)
-    c.drawRightString(label_right_x, info_y, "Scan ID")
-    c.setFont("Helvetica", 10)
-    scan_id_text = _fit_text(c, str(scan.get("scan_id", "n/a")), "Helvetica", 10, field_value_max)
-    c.drawString(value_x, info_y, scan_id_text)
+    c.setFillColor(colors.HexColor("#8d6e31"))
+    c.setFont("Times-Italic", 15)
+    c.drawCentredString(w / 2, top - 115, "has undergone rigorous Cyber PQC Posture Assessment and achieved a")
 
-    info_y -= 24
-    c.setFont("Helvetica-Bold", 11)
-    c.drawRightString(label_right_x, info_y, "Average HNDL Risk Score")
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(value_x, info_y, f"{avg_risk:.2f}")
-
-    info_y -= 24
-    c.setFont("Helvetica-Bold", 11)
-    c.drawRightString(label_right_x, info_y, "Assessment Window")
-    c.setFont("Helvetica", 10)
-    c.drawString(value_x, info_y, f"{issued_at.strftime('%d %b %Y')} - {valid_until.strftime('%d %b %Y')}")
-
-    if label == "Fully Quantum Safe":
+    if label == "Quantum-Safe":
         badge_color = colors.HexColor("#2d6e4d")
     elif label == "PQC Ready":
         badge_color = colors.HexColor("#8a6a22")
     else:
         badge_color = colors.HexColor("#8b2f2f")
-    info_y -= 44
+
+    box_w = 400
+    box_h = 44
+    box_x = (w - box_w) / 2
+    box_y = top - 185
+
+    c.setFillColor(colors.HexColor("#f9f0dc"))
+    c.roundRect(box_x - 10, box_y - 10, box_w + 20, box_h + 20, 8, fill=1, stroke=0)
+
     c.setFillColor(badge_color)
-    c.roundRect(panel_x + 20, info_y - 2, panel_w - 40, 34, 10, fill=1, stroke=0)
+    c.roundRect(box_x, box_y, box_w, box_h, 8, fill=1, stroke=0)
+
     c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 15)
-    readiness_text = _fit_text(c, f"Readiness Label: {label}", "Helvetica-Bold", 15, panel_w - 56)
-    c.drawCentredString(panel_x + (panel_w / 2), info_y + 9, readiness_text)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(w / 2, box_y + 16, f"Readiness Label: {label}")
 
-    info_y -= 42
-    c.setFillColor(colors.HexColor("#7b6130"))
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(panel_x + 20, info_y, "Reference mappings")
-    c.setFont("Helvetica", 10)
-    c.drawString(panel_x + 28, info_y - 16, "- NIST FIPS 203 (ML-KEM)")
-    c.drawString(panel_x + 28, info_y - 30, "- NIST FIPS 204 (ML-DSA)")
-    c.drawString(panel_x + 28, info_y - 44, "- NIST FIPS 205 (SLH-DSA)")
+    info_y = box_y - 45
+    c.setFillColor(colors.HexColor("#654f1f"))
+    c.setFont("Helvetica", 12)
+    c.drawCentredString(w / 2, info_y, f"Average HNDL Risk Score: {avg_risk:.2f}")
 
-    # Right authenticity panel
-    right_x = panel_x + panel_w + 18
-    right_w = inner_x + inner_w - 28 - right_x
-    right_y = panel_y
-    right_h = panel_h
-    c.setFillColor(colors.HexColor("#f5e9ce"))
-    c.roundRect(right_x, right_y, right_w, right_h, 12, fill=1, stroke=0)
-    c.setStrokeColor(colors.HexColor("#d3ba86"))
-    c.roundRect(right_x, right_y, right_w, right_h, 12, fill=0, stroke=1)
+    bot_y = inner_y + 70
 
-    content_left = right_x + 14
-    content_right = right_x + right_w - 14
-    header_y = right_y + right_h - 28
-    sig_line_y = right_y + 72
-    sig_text_y = sig_line_y - 16
-    sig_image_y = sig_line_y + 8
-    verification_y = sig_line_y - 30
-    separator_y = header_y - 25
-
-    c.setFillColor(colors.HexColor("#6c5423"))
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(content_left, header_y, "Certificate Authority")
-    c.setFont("Helvetica", 10)
-    c.drawString(content_left, header_y - 16, (os.getenv("QH_TEAM_NAME") or "Quanthunt Cyber Risk Intelligence").strip())
-
-    c.setStrokeColor(colors.HexColor("#c9b281"))
-    c.setLineWidth(1)
-    c.line(content_left, separator_y, content_right, separator_y)
-
-    seal_radius = max(20, min(28, (right_w - 28) / 2))
-    seal_text = (os.getenv("QH_CERT_SEAL_TEXT") or "Quantum Verified").strip()
-    seal_cx = right_x + (right_w / 2)
-    seal_cy = min(header_y - 54, sig_line_y + 64)
-    _draw_gold_seal(c, seal_cx, seal_cy, seal_radius, seal_text)
-
-    c.setStrokeColor(colors.HexColor("#b49352"))
-    c.line(content_left, sig_line_y, content_right, sig_line_y)
+    left_x = inner_x + 140
     c.setFillColor(colors.HexColor("#6e5626"))
-    c.setFont("Helvetica-Bold", 11)
-    team_name = (os.getenv("QH_TEAM_NAME") or "Quanthunt Team").strip()
-    c.drawString(content_left, sig_text_y, f"Signature: {team_name}")
-    sig_drawn = _draw_optional_image(c, "QH_CERT_SIGNATURE_PATH", content_left, sig_image_y, 120, 44)
+    c.setFont("Helvetica", 12)
+    c.drawCentredString(left_x, bot_y, issued_at.strftime("%d %b %Y"))
+    c.setStrokeColor(colors.HexColor("#b49352"))
+    c.line(left_x - 80, bot_y - 12, left_x + 80, bot_y - 12)
+    c.setFont("Helvetica", 10)
+    c.drawCentredString(left_x, bot_y - 25, "Date of Issue")
+
+    seal_cx = w / 2
+    seal_cy = bot_y + 10
+    _draw_gold_seal(c, seal_cx, seal_cy, 45, (os.getenv("QH_CERT_SEAL_TEXT") or "Quantum Verified").strip())
+
+    right_x = w - inner_x - 140
+    c.setFont("Helvetica-Oblique", 14)
+    sig_drawn = _draw_optional_image(c, "QH_CERT_SIGNATURE_PATH", right_x - 60, bot_y - 10, 120, 40)
     if not sig_drawn:
-        c.setFont("Times-Italic", 18)
-        c.setFillColor(colors.HexColor("#7d6332"))
-        c.drawString(content_left, sig_line_y + 22, (os.getenv("QH_TEAM_SIGNATURE") or "Quanthunt Security Team").strip())
-    c.setFont("Helvetica", 9)
-    c.drawString(content_left, verification_y, "Verification: /api/scan/{scan_id}")
+        c.drawCentredString(right_x, bot_y, (os.getenv("QH_TEAM_SIGNATURE") or "QuantHunt Security").strip())
+    c.setStrokeColor(colors.HexColor("#b49352"))
+    c.line(right_x - 90, bot_y - 12, right_x + 90, bot_y - 12)
+    c.setFont("Helvetica", 10)
+    c.drawCentredString(right_x, bot_y - 25, "Authorized Signature")
 
-    # Footer note
-    c.setFillColor(colors.HexColor("#7a6231"))
-    c.setFont("Helvetica", 9)
-    footer = "This certificate reflects posture at scan completion time. PQC/FIPS indications are heuristic signals from observed metadata."
-    c.drawCentredString(w / 2, inner_y + 18, footer)
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(w / 2, inner_y + 20, f"Scan ID: {scan.get('scan_id', 'n/a')}  |  Valid through: {valid_until.strftime('%d %b %Y')}")
 
-    c.showPage()
     c.save()
-    buf.seek(0)
-    return buf.read()
+    return buf.getvalue()

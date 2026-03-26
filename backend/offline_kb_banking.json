@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "version": "1.0.0-banking",
+    "last_updated": "2026-03-25T00:00:00Z",
+    "description": "Banking-specific offline knowledge base for QuantHunt AI"
+  },
+  "entries": {
+    "banking_context": {
+      "rbi": "For banking workloads, align crypto transition plans with RBI cyber security guidance and internal audit timelines.",
+      "payment gateway": "Prioritize payment gateway and authentication perimeter endpoints for strict TLS 1.3 and PQC-hybrid pilot controls.",
+      "core banking": "Core banking domains should use a stricter risk baseline and accelerated key rotation cadence due to longer data-retention risk.",
+      "atm network": "For ATM and branch integration channels, inventory legacy TLS dependencies and schedule phased cryptographic hardening.",
+      "banking roadmap": "A banking-ready roadmap: 1) CBOM inventory of internet and partner channels, 2) strict key exchange policy, 3) HSM-backed PQC pilot, 4) audit evidence collection."
+    },
+    "assistant": {
+      "who am i": "You are operating the banking mode of QuantHunt AI, focused on stricter PQC transition controls.",
+      "hello": "Welcome to QuantHunt banking mode. I can help with bank-grade PQC posture analysis and remediation sequencing.",
+      "hndl": "In banking environments, HNDL exposure is higher priority due to longer confidentiality windows for customer and transaction data."
+    }
+  }
+}

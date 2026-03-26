@@ -1,0 +1,2 @@
+Unable to create process using '"C:\Users\akula\cyber\.venv\Scripts\python.exe" -m uvicorn backend.main:app --host 127.0.0.1 --port 8013 ': The file cannot be accessed by the system.
+

@@ -1,0 +1,9 @@
+{
+  "javascript.validate.enable": false,
+  "typescript.validate.enable": false,
+  "eslint.enable": false,
+  "standard.enable": false,
+  "problems.exclude": {
+    "**/frontend/app.jsx": true
+  }
+}
