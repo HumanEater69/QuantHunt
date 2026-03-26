@@ -3,7 +3,21 @@ from __future__ import annotations
 from typing import Any
 
 from ..models import AssetFinding
-from .pqc_engine import label_for_score
+
+
+def _key_exchange_algorithm(cipher_suite: str | None) -> str:
+    c = (cipher_suite or "").upper()
+    if any(x in c for x in ("MLKEM", "ML-KEM", "KYBER")) and any(
+        x in c for x in ("X25519", "X448", "ECDHE", "DHE")
+    ):
+        return "Hybrid (Classical + ML-KEM)"
+    if any(x in c for x in ("MLKEM", "ML-KEM", "KYBER")):
+        return "ML-KEM"
+    if any(x in c for x in ("X25519", "X448", "ECDHE", "DHE", "ECDH")):
+        return "ECDHE/DHE"
+    if "_RSA_" in c or "TLS_RSA" in c:
+        return "RSA"
+    return "unknown"
 
 def build_cbom(domain: str, findings: list[AssetFinding]) -> dict[str, Any]:
     components: list[dict[str, Any]] = []
@@ -15,6 +29,9 @@ def build_cbom(domain: str, findings: list[AssetFinding]) -> dict[str, Any]:
         fips203 = any(x in cipher_up for x in ["ML-KEM", "MLKEM", "KYBER"])
         fips204 = any(x in cert_sig_up for x in ["ML-DSA", "MLDSA", "DILITHIUM"])
         fips205 = any(x in cert_sig_up for x in ["SLH-DSA", "SLHDSA", "SPHINCS"])
+        pqc_detected = fips203 or fips204 or fips205
+        pqc_label = "Quantum-Safe" if pqc_detected else "Classic-Secure"
+        key_exchange_algo = _key_exchange_algorithm(f.tls.cipher_suite)
         components.append(
             {
                 "type": "cryptographic-asset",
@@ -24,16 +41,22 @@ def build_cbom(domain: str, findings: list[AssetFinding]) -> dict[str, Any]:
                     "protocolProperties": {
                         "type": "tls",
                         "version": f.tls.tls_version or "unknown",
+                        "keyExchangeAlgorithm": key_exchange_algo,
+                        "primaryCipherSuite": f.tls.cipher_suite or "unknown",
                         "cipherSuites": f.tls.accepted_ciphers or ([f.tls.cipher_suite] if f.tls.cipher_suite else []),
-                        "ikev2TransformTypes": [{"type": "keyExchange", "id": f.tls.cipher_suite or "unknown"}],
+                        "ikev2TransformTypes": [{"type": "keyExchange", "id": key_exchange_algo}],
                     },
                 },
                 "properties": [
                     {
                         "name": "quantum-safe",
-                        "value": str(label_for_score(float(f.hndl_risk_score)) == "Quantum-Safe").lower(),
+                        "value": str(pqc_detected).lower(),
                     },
                     {"name": "hndl-risk-score", "value": str(f.hndl_risk_score)},
+                    {"name": "pqc-posture-label", "value": pqc_label},
+                    {"name": "key-exchange-algorithm", "value": key_exchange_algo},
+                    {"name": "primary-cipher-suite", "value": f.tls.cipher_suite or "unknown"},
+                    {"name": "tls-scan-error", "value": f.tls.scan_error or ""},
                     {"name": "nist-fips-203-signal-detected", "value": str(fips203).lower()},
                     {"name": "nist-fips-204-signal-detected", "value": str(fips204).lower()},
                     {"name": "nist-fips-205-signal-detected", "value": str(fips205).lower()},
@@ -43,7 +66,8 @@ def build_cbom(domain: str, findings: list[AssetFinding]) -> dict[str, Any]:
                         "value": "Derived from observable TLS/certificate metadata; this is not formal cryptographic certification.",
                     },
                     {"name": "nist-pqc-ref", "value": "FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA)"},
-                    {"name": "label", "value": f.label},
+                    {"name": "label", "value": pqc_label},
+                    {"name": "hndl-label", "value": f.label},
                 ],
             }
         )

@@ -128,3 +128,97 @@ code {
     background-position: 0% 20%;
   }
 }
+
+.cbom-picker-shell {
+  border: 1px solid rgba(160, 146, 97, 0.42);
+  border-radius: 14px;
+  background: linear-gradient(140deg, rgba(255, 248, 224, 0.58), rgba(212, 244, 223, 0.3));
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 16px 34px rgba(110, 137, 87, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.cbom-picker-summary {
+  cursor: pointer;
+  list-style: none;
+  font-family: "Orbitron", "JetBrains Mono", monospace;
+  font-size: 12px;
+  color: #2f614b;
+  letter-spacing: 0.05em;
+  padding: 10px 12px;
+}
+
+.cbom-picker-summary::-webkit-details-marker {
+  display: none;
+}
+
+.cbom-picker-summary::before {
+  content: "▾";
+  margin-right: 8px;
+  color: #8f7a35;
+}
+
+.cbom-picker-shell:not([open]) .cbom-picker-summary::before {
+  content: "▸";
+}
+
+.cbom-picker-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.cbom-picker-search {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(157, 140, 86, 0.46);
+  padding: 9px 11px;
+  background: rgba(255, 252, 238, 0.82);
+  color: #2b3b2e;
+  outline: none;
+}
+
+.cbom-picker-search:focus {
+  border-color: rgba(38, 132, 97, 0.65);
+  box-shadow: 0 0 0 2px rgba(38, 132, 97, 0.14);
+}
+
+.cbom-picker-results {
+  max-height: 220px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.cbom-picker-item {
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid rgba(157, 140, 86, 0.35);
+  color: #375341;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.cbom-picker-empty {
+  border-radius: 10px;
+  border: 1px dashed rgba(143, 131, 89, 0.48);
+  color: #746a49;
+  background: rgba(255, 251, 238, 0.6);
+  padding: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+
+.cbom-picker-selected {
+  color: #4e654f;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+
+.cbom-liquid-glass {
+  backdrop-filter: blur(20px) saturate(1.25);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
+}

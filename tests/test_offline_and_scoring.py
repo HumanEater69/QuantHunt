@@ -6,8 +6,10 @@ from backend.main import (
     _vpn_block_reasons,
     _vpn_signal_score,
 )
+from backend.models import APIInfo, AssetFinding, TLSInfo
 from backend.reporting import readiness_label
-from backend.scanner.pqc_engine import classify_key_exchange, label_for_score
+from backend.scanner.cbom_generator import build_cbom
+from backend.scanner.pqc_engine import classify_key_exchange, classify_tls_version, hndl_score, label_for_score
 
 CTX = """Source=backend
 1. pnbindia.in score=71 assets=10
@@ -30,6 +32,66 @@ class RiskModelTests(unittest.TestCase):
     def test_key_exchange_tls13_not_auto_critical(self) -> None:
         self.assertEqual(classify_key_exchange("TLS_AES_256_GCM_SHA384", "TLSv1.3"), "WARNING")
         self.assertEqual(classify_key_exchange("TLS_RSA_WITH_AES_128_GCM_SHA256", "TLSv1.2"), "CRITICAL")
+
+    def test_unknown_tls_is_critical(self) -> None:
+        self.assertEqual(classify_tls_version(None), "CRITICAL")
+        self.assertEqual(classify_tls_version("unknown"), "CRITICAL")
+
+    def test_hndl_penalizes_long_lived_rsa(self) -> None:
+        base = hndl_score("WARNING", "WARNING", "WARNING", "WARNING", "WARNING", scan_model="general")
+        rsa_long_lived = hndl_score(
+            "WARNING",
+            "WARNING",
+            "WARNING",
+            "WARNING",
+            "WARNING",
+            scan_model="general",
+            cipher_suite="TLS_RSA_WITH_AES_256_GCM_SHA384",
+            cert_sig_algo="sha256WithRSAEncryption",
+            cert_not_before="Jan 01 00:00:00 2024 GMT",
+            cert_not_after="Jan 01 00:00:00 2028 GMT",
+        )
+        self.assertGreater(rsa_long_lived, base)
+
+
+class CbomLogicTests(unittest.TestCase):
+    def test_cbom_quantum_safe_depends_on_nist_signal(self) -> None:
+        finding = AssetFinding(
+            asset="example.com",
+            tls=TLSInfo(host="example.com", tls_version="TLSv1.3", cipher_suite="TLS_AES_256_GCM_SHA384"),
+            api=APIInfo(host="example.com"),
+            key_exchange_status="WARNING",
+            auth_status="WARNING",
+            tls_status="ACCEPTABLE",
+            cert_algo_status="WARNING",
+            symmetric_status="ACCEPTABLE",
+            hndl_risk_score=20,
+            label="Quantum-Safe",
+            recommendations=[],
+        )
+        cbom = build_cbom("example.com", [finding])
+        props = {p["name"]: p["value"] for p in cbom["components"][0]["properties"]}
+        self.assertEqual(props["quantum-safe"], "false")
+        self.assertEqual(props["label"], "Classic-Secure")
+
+    def test_cbom_includes_key_exchange_granularity(self) -> None:
+        finding = AssetFinding(
+            asset="hybrid.example",
+            tls=TLSInfo(host="hybrid.example", tls_version="TLSv1.3", cipher_suite="TLS_X25519_MLKEM768_AES_256_GCM_SHA384"),
+            api=APIInfo(host="hybrid.example"),
+            key_exchange_status="SAFE",
+            auth_status="WARNING",
+            tls_status="ACCEPTABLE",
+            cert_algo_status="WARNING",
+            symmetric_status="ACCEPTABLE",
+            hndl_risk_score=15,
+            label="Quantum-Safe",
+            recommendations=[],
+        )
+        cbom = build_cbom("hybrid.example", [finding])
+        proto = cbom["components"][0]["cryptoProperties"]["protocolProperties"]
+        self.assertIn("keyExchangeAlgorithm", proto)
+        self.assertIn("primaryCipherSuite", proto)
 
 class OfflineAssistantIntentTests(unittest.TestCase):
     def test_top3_risky_intent(self) -> None:

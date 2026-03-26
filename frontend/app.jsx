@@ -22,6 +22,10 @@ const Tooltip = RCH.Tooltip || (() => null);
 const Cell = RCH.Cell || (() => null);
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const NETLIFY_HOSTS = new Set([
+  "quanthunt.netlify.app",
+  "69c5241b50804617081efffb--quanthunt.netlify.app",
+]);
 const sanitizeApiBase = (value) => String(value || "").trim().replace(/\/+$/, "");
 const resolveApiBase = () => {
   try {
@@ -31,6 +35,11 @@ const resolveApiBase = () => {
     if (queryApi) {
       window.localStorage.setItem("qh_api_base", queryApi);
       return queryApi;
+    }
+    // In production on Netlify, always use same-origin /api proxy unless user passes ?api= explicitly.
+    if (NETLIFY_HOSTS.has(window.location.hostname)) {
+      window.localStorage.removeItem("qh_api_base");
+      return "";
     }
     const savedApi = sanitizeApiBase(window.localStorage.getItem("qh_api_base"));
     if (savedApi) return savedApi;
@@ -4181,8 +4190,12 @@ function CBOMTab({ scanModel = "general" }) {
   const [selectedDomain, setSelectedDomain] = useState("");
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [fleetLossPct, setFleetLossPct] = useState(1.2);
+  const [exportingFleetCsv, setExportingFleetCsv] = useState(false);
   const [exportingAllScenarios, setExportingAllScenarios] = useState(false);
   const [scenarioExportLog, setScenarioExportLog] = useState([]);
+  const [scanPickerQuery, setScanPickerQuery] = useState("");
+  const [scanPickerIndex, setScanPickerIndex] = useState(-1);
+  const [exportFeedback, setExportFeedback] = useState("");
 
   useEffect(() => {
     fetch(`${API}/api/scans?${scanModelParam(scanModel)}`)
@@ -4238,12 +4251,22 @@ function CBOMTab({ scanModel = "general" }) {
         asset_type: comp?.cryptoProperties?.assetType || "",
         protocol: comp?.cryptoProperties?.protocolProperties?.type || "",
         tls_version: comp?.cryptoProperties?.protocolProperties?.version || "",
+        key_exchange_algorithm:
+          props["key-exchange-algorithm"] ||
+          comp?.cryptoProperties?.protocolProperties?.keyExchangeAlgorithm ||
+          "",
+        primary_cipher_suite:
+          props["primary-cipher-suite"] ||
+          comp?.cryptoProperties?.protocolProperties?.primaryCipherSuite ||
+          "",
         hndl_risk_score: props["hndl-risk-score"] || "",
         label: props.label || "",
+        hndl_label: props["hndl-label"] || "",
         quantum_safe: props["quantum-safe"] || "",
         nist_fips_203: props["nist-fips-203-signal-detected"] || "",
         nist_fips_204: props["nist-fips-204-signal-detected"] || "",
         nist_fips_205: props["nist-fips-205-signal-detected"] || "",
+        tls_scan_error: props["tls-scan-error"] || "",
       };
     });
   };
@@ -4268,10 +4291,81 @@ function CBOMTab({ scanModel = "general" }) {
     [scans],
   );
 
+  const filteredScans = useMemo(() => {
+    const q = String(scanPickerQuery || "").trim().toLowerCase();
+    if (!q) return scans;
+    return scans.filter((s) =>
+      String(s?.domain || "").toLowerCase().includes(q),
+    );
+  }, [scans, scanPickerQuery]);
+
+  useEffect(() => {
+    if (!filteredScans.length) {
+      setScanPickerIndex(-1);
+      return;
+    }
+    setScanPickerIndex((prev) => {
+      if (prev < 0) return 0;
+      if (prev >= filteredScans.length) return filteredScans.length - 1;
+      return prev;
+    });
+  }, [filteredScans]);
+
+  const onScanPickerKeyDown = (e) => {
+    if (!filteredScans.length) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setScanPickerIndex((prev) => {
+        if (prev < 0) return 0;
+        return Math.min(prev + 1, filteredScans.length - 1);
+      });
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setScanPickerIndex((prev) => {
+        if (prev < 0) return filteredScans.length - 1;
+        return Math.max(prev - 1, 0);
+      });
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const idx = scanPickerIndex >= 0 ? scanPickerIndex : 0;
+      const picked = filteredScans[idx];
+      if (picked) {
+        load(picked.scan_id, picked.domain);
+      }
+      return;
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setScanPickerQuery("");
+      setScanPickerIndex(filteredScans.length ? 0 : -1);
+    }
+  };
+
+  const downloadBlobFile = (filename, blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1200);
+  };
+
   const exportFleetSimulationCsv = async () => {
     const domains = completedDomains;
     if (!domains.length) return;
 
+    setExportingFleetCsv(true);
+    setExportFeedback("");
     try {
       const resp = await fetch(`${API}/api/pqc/fleet-export.csv`, {
         method: "POST",
@@ -4287,14 +4381,16 @@ function CBOMTab({ scanModel = "general" }) {
       }
       const blob = await resp.blob();
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `fleet-simulation-${fleetLossPct.toFixed(1)}pct-${stamp}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
-    } catch (_err) {}
+      downloadBlobFile(
+        `fleet-simulation-${fleetLossPct.toFixed(1)}pct-${stamp}.csv`,
+        blob,
+      );
+      setExportFeedback("Simulation CSV downloaded successfully.");
+    } catch (err) {
+      setExportFeedback(`Simulation CSV export failed: ${String(err)}`);
+    } finally {
+      setExportingFleetCsv(false);
+    }
   };
 
   const exportAllScenarioCsvs = async () => {
@@ -4308,9 +4404,12 @@ function CBOMTab({ scanModel = "general" }) {
     ];
 
     setExportingAllScenarios(true);
+    setExportFeedback("");
     setScenarioExportLog([]);
     try {
       const exported = [];
+      const combinedRows = [];
+      let header = "";
       for (const scenario of scenarios) {
         const resp = await fetch(`${API}/api/pqc/fleet-export.csv`, {
           method: "POST",
@@ -4324,17 +4423,19 @@ function CBOMTab({ scanModel = "general" }) {
           const errText = await resp.text();
           throw new Error(errText || `HTTP ${resp.status}`);
         }
-        const blob = await resp.blob();
+        const csvText = await resp.text();
+        const lines = String(csvText || "")
+          .split(/\r?\n/)
+          .filter(Boolean);
+        if (!lines.length) continue;
+        if (!header) {
+          header = `scenario,loss_pct,${lines[0]}`;
+        }
+        for (const line of lines.slice(1)) {
+          combinedRows.push(`${scenario.name},${scenario.lossPct.toFixed(1)},${line}`);
+        }
         const now = new Date();
-        const stamp = now.toISOString().replace(/[:.]/g, "-");
-        const fileName = `fleet-simulation-${scenario.name}-${scenario.lossPct.toFixed(1)}pct-${stamp}.csv`;
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(a.href);
+        const fileName = `fleet-simulation-${scenario.name}-${scenario.lossPct.toFixed(1)}pct.csv`;
 
         exported.push({
           scenario: scenario.name,
@@ -4343,9 +4444,21 @@ function CBOMTab({ scanModel = "general" }) {
           exportedAt: now.toISOString(),
         });
       }
+      if (!header || !combinedRows.length) {
+        throw new Error("No scenario rows returned by export endpoint.");
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const combinedCsv = `${header}\n${combinedRows.join("\n")}`;
+      downloadTextFile(
+        `fleet-simulation-all-scenarios-${stamp}.csv`,
+        combinedCsv,
+        "text/csv;charset=utf-8",
+      );
       setScenarioExportLog(exported);
-    } catch (_err) {
+      setExportFeedback("All scenario CSV data exported as one combined file.");
+    } catch (err) {
       setScenarioExportLog([]);
+      setExportFeedback(`Scenario export failed: ${String(err)}`);
     } finally {
       setExportingAllScenarios(false);
     }
@@ -4478,28 +4591,53 @@ function CBOMTab({ scanModel = "general" }) {
             "Compliance-friendly evidence",
           ]}
         />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {scans.map((s) => (
-            <button
-              key={s.scan_id}
-              onClick={() => load(s.scan_id, s.domain)}
-              style={{
-                borderRadius: 10,
-                padding: "8px 12px",
-                border: `1px solid ${selectedScanId === s.scan_id ? C.cyan : C.border}`,
-                background:
-                  selectedScanId === s.scan_id
-                    ? "rgba(141,181,220,0.15)"
-                    : "transparent",
-                color: selectedScanId === s.scan_id ? C.cyan : C.dim,
-                cursor: "pointer",
-                fontFamily: "JetBrains Mono",
-              }}
-            >
-              {s.domain}
-            </button>
-          ))}
-        </div>
+        <details className="cbom-picker-shell" open>
+          <summary className="cbom-picker-summary">
+            Select scanned bank/domain ({scans.length})
+          </summary>
+          <div className="cbom-picker-body">
+            <input
+              type="text"
+              value={scanPickerQuery}
+              onChange={(e) => setScanPickerQuery(e.target.value)}
+              onKeyDown={onScanPickerKeyDown}
+              placeholder="Search bank domain..."
+              className="cbom-picker-search"
+            />
+            <div className="cbom-picker-results qh-soft-scroll">
+              {filteredScans.length ? (
+                filteredScans.map((s, idx) => (
+                  <button
+                    key={s.scan_id}
+                    onClick={() => load(s.scan_id, s.domain)}
+                    onMouseEnter={() => setScanPickerIndex(idx)}
+                    className="cbom-picker-item"
+                    aria-selected={idx === scanPickerIndex}
+                    style={{
+                      borderColor:
+                        selectedScanId === s.scan_id
+                          ? "rgba(30,128,93,0.65)"
+                          : "rgba(157,141,90,0.35)",
+                      background:
+                        selectedScanId === s.scan_id
+                          ? "linear-gradient(125deg, rgba(237,214,151,0.42), rgba(95,181,142,0.22))"
+                          : idx === scanPickerIndex
+                            ? "linear-gradient(125deg, rgba(255,238,178,0.52), rgba(128,214,176,0.26))"
+                            : "rgba(255,250,232,0.48)",
+                    }}
+                  >
+                    {s.domain}
+                  </button>
+                ))
+              ) : (
+                <div className="cbom-picker-empty">No scanned domains match your search.</div>
+              )}
+            </div>
+            <div className="cbom-picker-selected">
+              Selected: {selectedDomain || "None"}
+            </div>
+          </div>
+        </details>
         <div
           style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}
         >
@@ -4533,28 +4671,32 @@ function CBOMTab({ scanModel = "general" }) {
           </Btn>
           <Btn
             onClick={exportFleetSimulationCsv}
-            disabled={!completedDomains.length}
+            disabled={!completedDomains.length || exportingFleetCsv}
           >
-            EXPORT SIMULATION DATA CSV
+            {exportingFleetCsv
+              ? "EXPORTING SIMULATION CSV..."
+              : "EXPORT SIMULATION DATA CSV"}
           </Btn>
           <Btn
             onClick={exportAllScenarioCsvs}
             disabled={!completedDomains.length || exportingAllScenarios}
           >
             {exportingAllScenarios
-              ? "EXPORTING 3 SCENARIOS..."
-              : "EXPORT ALL 3 SCENARIO CSVS"}
+              ? "EXPORTING SCENARIOS CSV..."
+              : "EXPORT ALL SCENARIOS CSV"}
           </Btn>
         </div>
         <div
+          className="cbom-liquid-glass"
           style={{
             marginTop: 10,
             display: "grid",
             gap: 8,
-            border: `1px solid ${C.border}`,
+            border: "1px solid rgba(149,135,78,0.38)",
             borderRadius: 12,
             padding: 10,
-            background: "rgba(132,170,208,0.07)",
+            background:
+              "linear-gradient(135deg, rgba(255,248,222,0.56), rgba(180,231,205,0.33))",
           }}
         >
           <div
@@ -4615,6 +4757,21 @@ function CBOMTab({ scanModel = "general" }) {
               ))}
             </div>
           )}
+          {exportFeedback ? (
+            <div
+              style={{
+                border: "1px solid rgba(30,128,93,0.35)",
+                background: "rgba(242,255,245,0.62)",
+                borderRadius: 10,
+                color: "#1f6a4d",
+                fontFamily: "JetBrains Mono",
+                fontSize: 11,
+                padding: "8px 10px",
+              }}
+            >
+              {exportFeedback}
+            </div>
+          ) : null}
         </div>
         <div
           style={{

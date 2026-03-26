@@ -155,6 +155,10 @@ async def run_scan_pipeline(scan_id: str, domain: str, scan_model: str = "genera
                 symmetric_status,
                 host=asset,
                 scan_model=model,
+                cipher_suite=tls.cipher_suite,
+                cert_sig_algo=tls.cert_sig_algo,
+                cert_not_before=tls.cert_not_before,
+                cert_not_after=tls.cert_not_after,
             )
             label = label_for_score(score, scan_model=model)
             base_recs = recommendations_for_status(score, scan_model=model)

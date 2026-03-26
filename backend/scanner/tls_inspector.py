@@ -9,6 +9,40 @@ import urllib.request
 
 from ..models import TLSInfo
 
+
+def _probe_tls_with_openssl(host: str, port: int, timeout: float) -> tuple[str | None, str | None]:
+    for flag, version in (("-tls1_3", "TLSv1.3"), ("-tls1_2", "TLSv1.2")):
+        try:
+            proc = subprocess.run(
+                [
+                    "openssl",
+                    "s_client",
+                    "-connect",
+                    f"{host}:{port}",
+                    "-servername",
+                    host,
+                    "-brief",
+                    flag,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=max(1.0, timeout),
+                check=False,
+            )
+            text = f"{proc.stdout}\n{proc.stderr}"
+            if proc.returncode != 0 and "Protocol" not in text and "Ciphersuite" not in text:
+                continue
+            cipher = None
+            for line in text.splitlines():
+                s = line.strip()
+                if s.lower().startswith("ciphersuite:"):
+                    cipher = s.split(":", 1)[1].strip()
+                    break
+            return version, cipher
+        except Exception:
+            continue
+    return None, None
+
 def _name_tuple_to_str(name_tuple: tuple[tuple[str, str], ...] | None) -> str | None:
     if not name_tuple:
         return None
@@ -111,6 +145,12 @@ def inspect_tls(host: str, port: int = 443, timeout: float | None = None) -> TLS
                     info.ocsp_stapling = False
     except Exception as ex:
         info.scan_error = str(ex)
+        fallback_version, fallback_cipher = _probe_tls_with_openssl(host, port, timeout)
+        if fallback_version:
+            info.tls_version = fallback_version
+        if fallback_cipher:
+            info.cipher_suite = fallback_cipher
+            info.accepted_ciphers = [fallback_cipher]
         return info
 
     try:

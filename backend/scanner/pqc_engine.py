@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from ..models import APIInfo, TLSInfo
 
 WEIGHT = {"CRITICAL": 100, "WARNING": 50, "ACCEPTABLE": 20, "SAFE": 0}
@@ -62,6 +64,8 @@ def classify_auth(tls: TLSInfo, api: APIInfo, scan_model: str = "general") -> st
 
 def classify_tls_version(version: str | None) -> str:
     v = (version or "").upper()
+    if not v or v == "UNKNOWN":
+        return "CRITICAL"
     if "1.0" in v or "1.1" in v:
         return "CRITICAL"
     if "1.2" in v:
@@ -100,6 +104,10 @@ def hndl_score(
     symmetric: str,
     host: str | None = None,
     scan_model: str = "general",
+    cipher_suite: str | None = None,
+    cert_sig_algo: str | None = None,
+    cert_not_before: str | None = None,
+    cert_not_after: str | None = None,
 ) -> float:
     model = (scan_model or "general").lower()
     weights = (
@@ -118,7 +126,35 @@ def hndl_score(
     if model != "banking" and not _is_banking_host(host):
         score = score * 0.70
 
-    return round(score, 2)
+    cipher_up = (cipher_suite or "").upper()
+    sig_up = (cert_sig_algo or "").upper()
+    rsa_in_use = "_RSA_" in cipher_up or "TLS_RSA" in cipher_up or "RSA" in sig_up
+    if rsa_in_use:
+        # Long-term RSA auth/key-establishment materially increases harvest-now/decrypt-later risk.
+        score += 8
+
+    def _parse_cert_dt(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        for fmt in ("%b %d %H:%M:%S %Y %Z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+        return None
+
+    not_before = _parse_cert_dt(cert_not_before)
+    not_after = _parse_cert_dt(cert_not_after)
+    if not_before and not_after and not_after > not_before:
+        validity_days = (not_after - not_before).days
+        if validity_days > 397:
+            score += 5
+        elif validity_days > 365:
+            score += 3
+        if rsa_in_use and validity_days > 365:
+            score += 4
+
+    return round(min(max(score, 0.0), 100.0), 2)
 
 def label_for_score(score: float, scan_model: str = "general") -> str:
     model = (scan_model or "general").lower()
