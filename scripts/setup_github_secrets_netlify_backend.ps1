@@ -1,8 +1,8 @@
 Param(
   [Parameter(Mandatory = $true)] [string]$Repo,
-  [Parameter(Mandatory = $true)] [string]$VercelToken,
-  [Parameter(Mandatory = $true)] [string]$VercelOrgId,
-  [Parameter(Mandatory = $true)] [string]$VercelProjectId,
+  [Parameter(Mandatory = $true)] [string]$NetlifyAuthToken,
+  [Parameter(Mandatory = $true)] [string]$NetlifySiteId,
+  [Parameter(Mandatory = $true)] [string]$NetlifySiteUrl,
   [Parameter(Mandatory = $true)] [string]$BackendDeployHookUrl,
   [Parameter(Mandatory = $true)] [string]$BackendOrigin
 )
@@ -13,10 +13,10 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 
 Write-Host "Setting repository secrets for $Repo ..."
 
-$VercelToken | gh secret set VERCEL_TOKEN --repo $Repo
-$VercelOrgId | gh secret set VERCEL_ORG_ID --repo $Repo
-$VercelProjectId | gh secret set VERCEL_PROJECT_ID --repo $Repo
+$NetlifyAuthToken | gh secret set NETLIFY_AUTH_TOKEN --repo $Repo
+$NetlifySiteId | gh secret set NETLIFY_SITE_ID --repo $Repo
+$NetlifySiteUrl | gh secret set NETLIFY_SITE_URL --repo $Repo
 $BackendDeployHookUrl | gh secret set BACKEND_DEPLOY_HOOK_URL --repo $Repo
 $BackendOrigin | gh secret set BACKEND_ORIGIN --repo $Repo
 
-Write-Host "Done. Vercel + backend deployment secrets configured for $Repo"
+Write-Host "Done. Netlify + backend deployment secrets configured for $Repo"

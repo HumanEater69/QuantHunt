@@ -13,35 +13,29 @@ uvicorn backend.main:app --reload --port 8000
 
 Open: `http://localhost:8000`
 
-## Deployment Revamp (Vercel + Backend Hook)
+## Deployment Revamp (Netlify + Backend Hook)
 
-This repo has been cleaned up to remove Netlify/Azure deployment paths.
+This repo is now configured for Netlify frontend deployment and a free backend host via deploy hook.
 
-- Frontend deploy target: Vercel
-- Backend deploy target: provider deploy hook (recommended: Koyeb FastAPI service)
+- Frontend deploy target: Netlify (`https://quanthunt.netlify.app`)
+- Backend deploy target: provider deploy hook
 
 ### Current Deployment Workflows
 
-- `.github/workflows/frontend-vercel.yml`
+- `.github/workflows/frontend-netlify.yml`
 - `.github/workflows/backend-deploy.yml`
 
 Both workflows enforce backend regression tests (`tests.test_offline_and_scoring`) before deployment.
 
-### Frontend (Vercel)
+### Frontend (Netlify)
 
-The frontend is deployed from the `frontend/` directory. Vercel routing is configured in:
-
-- `frontend/vercel.json`
-
-It rewrites `/api/*` to the backend candidate origin:
-
-- `https://quanthunt-backend.koyeb.app/api/*`
+The frontend is deployed from the `frontend/` directory using Netlify CLI.
 
 Required GitHub secrets for frontend workflow:
 
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
+- `NETLIFY_AUTH_TOKEN`
+- `NETLIFY_SITE_ID`
+- `NETLIFY_SITE_URL`
 
 ### Backend (Free Candidate)
 
@@ -60,39 +54,25 @@ Required GitHub secrets for backend workflow:
 
 Recommended backend candidate for current FastAPI codebase:
 
-- Koyeb (container deployment from this repo's Dockerfile)
-
-### Cloudflare vs AWS Free Constraints (Before Finalizing)
-
-Cloudflare Workers (from Workers pricing/docs):
-
-- No credit card needed on free plan
-- Free tier includes request/usage limits (for example 100,000 daily requests)
-- Best for edge/serverless patterns, but this backend is a stateful FastAPI app and would require a major runtime refactor to fit Workers constraints
-
-AWS Free Tier (from AWS Free page):
-
-- Time/credit constrained for new accounts (up to 6 months with credits model shown)
-- Not a clean "forever free" path for an always-on web backend
-- Account setup and billing model are less aligned with strict "no card + 24/7 always-on" requirement
+- Any free host with deploy webhook support (for example Netlify build hook, Koyeb, Render)
 
 Decision for this repo:
 
-- Use Vercel for frontend
-- Use Koyeb as backend candidate via deploy hook for a FastAPI-native deployment path with minimal code change
+- Use Netlify for frontend/custom domain delivery
+- Use backend deploy hook + `BACKEND_ORIGIN` probe to keep the backend platform interchangeable
 
 ### One-time GitHub Secrets Setup
 
 You can configure required secrets in one command:
 
 ```powershell
-scripts\setup_github_secrets_vercel_backend.ps1 \
+scripts\setup_github_secrets_netlify_backend.ps1 \
 	-Repo "HumanEater69/QuantHunt" \
-	-VercelToken "<vercel-token>" \
-	-VercelOrgId "<vercel-org-id>" \
-	-VercelProjectId "<vercel-project-id>" \
+	-NetlifyAuthToken "<netlify-auth-token>" \
+	-NetlifySiteId "<netlify-site-id>" \
+	-NetlifySiteUrl "https://quanthunt.netlify.app" \
 	-BackendDeployHookUrl "<backend-deploy-hook-url>" \
-	-BackendOrigin "https://quanthunt-backend.koyeb.app"
+	-BackendOrigin "https://quanthunt.netlify.app"
 ```
 
 ## Deep Clean Smoke Test (One Command)
