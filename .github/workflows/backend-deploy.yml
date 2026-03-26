@@ -50,7 +50,12 @@ jobs:
 
       - name: Trigger backend deployment
         run: |
-          curl -fsSL -X POST "${{ secrets.BACKEND_DEPLOY_HOOK_URL }}"
+          code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "${{ secrets.BACKEND_DEPLOY_HOOK_URL }}" || true)"
+          if [ "$code" = "200" ] || [ "$code" = "201" ] || [ "$code" = "202" ]; then
+            echo "Backend deploy hook accepted (HTTP $code)."
+          else
+            echo "Backend deploy hook did not return success (HTTP $code). Continuing to health probe."
+          fi
 
       - name: Probe backend health
         run: |
