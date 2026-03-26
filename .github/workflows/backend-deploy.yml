@@ -59,20 +59,18 @@ jobs:
             fi
           fi
 
-      - name: Trigger backend deployment
-        if: ${{ secrets.BACKEND_DEPLOY_HOOK_URL != '' }}
+      - name: Trigger backend deployment (optional)
         run: |
+          if [ -z "${{ secrets.BACKEND_DEPLOY_HOOK_URL }}" ]; then
+            echo "Skipped hook trigger because BACKEND_DEPLOY_HOOK_URL is not configured."
+            exit 0
+          fi
           code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "${{ secrets.BACKEND_DEPLOY_HOOK_URL }}" || true)"
           if [ "$code" = "200" ] || [ "$code" = "201" ] || [ "$code" = "202" ]; then
             echo "Backend deploy hook accepted (HTTP $code)."
           else
             echo "Backend deploy hook did not return success (HTTP $code). Continuing to health probe."
           fi
-
-      - name: Skip backend deployment hook
-        if: ${{ secrets.BACKEND_DEPLOY_HOOK_URL == '' }}
-        run: |
-          echo "Skipped hook trigger because BACKEND_DEPLOY_HOOK_URL is not configured."
 
       - name: Probe backend health
         run: |
