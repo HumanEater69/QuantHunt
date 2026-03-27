@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://quanthunt-fullstack-production.up.railway.app/api/:path*"
+      "destination": "https://ep-withered-feather-a8q01x6f.apirest.eastus2.azure.neon.tech/neondb/rest/v1/:path*"
     },
     {
       "source": "/(.*)",

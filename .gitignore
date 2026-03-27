@@ -2,6 +2,3 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-
-# Local deploy staging area
-_railway_stage/

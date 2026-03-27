@@ -17,7 +17,7 @@ Open: `http://localhost:8000`
 
 This repo is configured for:
 
-- Backend deployment on Railway (GitHub Actions)
+- Backend deployment via generic deploy hook (GitHub Actions)
 - Frontend deployment on Vercel (GitHub Actions)
 
 ### Current Deployment Workflow
@@ -28,7 +28,7 @@ The workflow enforces backend regression tests (`tests.test_offline_and_scoring`
 
 ### Backend
 
-Backend workflow triggers a provider deploy hook and probes health on:
+Backend workflow triggers your provider deploy hook and probes health on:
 
 - `${BACKEND_ORIGIN}/api/scans`
 
@@ -41,18 +41,30 @@ Required GitHub secrets for backend workflow:
 - `BACKEND_DEPLOY_HOOK_URL`
 - `BACKEND_ORIGIN`
 
-Recommended backend target for current FastAPI codebase:
-
-- Railway FastAPI service: `https://quanthunt-fullstack-production.up.railway.app`
-
 ### One-time GitHub Secrets Setup (Backend)
 
 Configure backend deployment secrets:
 
 ```powershell
 "<backend-deploy-hook-url>" | gh secret set BACKEND_DEPLOY_HOOK_URL
-"https://quanthunt-fullstack-production.up.railway.app" | gh secret set BACKEND_ORIGIN
+"https://<your-backend-host>" | gh secret set BACKEND_ORIGIN
 ```
+
+### Database (Neon)
+
+Backend DB URLs are configured from environment variables in this order:
+
+- `DATABASE_URL` (preferred)
+- `BANKING_DATABASE_URL` (optional override for banking model)
+- `NEON_DATABASE_URL` (shared fallback for both models)
+
+Set a Neon Postgres connection string in `NEON_DATABASE_URL` (or `DATABASE_URL`).
+
+If you are using Neon REST API separately, keep it in your own env var (for example `NEON_REST_API_URL`) and API key env var in your backend host.
+
+Example Neon REST endpoint provided:
+
+- `https://ep-withered-feather-a8q01x6f.apirest.eastus2.azure.neon.tech/neondb/rest/v1`
 
 ### Frontend (Vercel)
 
@@ -77,9 +89,7 @@ Get-Content frontend\.vercel\project.json
 "<vercel-project-id>" | gh secret set VERCEL_PROJECT_ID
 ```
 
-Frontend API calls use `/api/*`, and `frontend/vercel.json` rewrites those requests to Railway:
-
-- `https://quanthunt-fullstack-production.up.railway.app/api/*`
+Frontend API calls use `/api/*`, and `frontend/vercel.json` rewrites those requests to your backend host.
 
 ## Deep Clean Smoke Test (One Command)
 

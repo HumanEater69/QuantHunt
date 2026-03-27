@@ -10,8 +10,18 @@ from sqlalchemy.orm import Session, sessionmaker
 SCAN_MODELS = ("general", "banking")
 DEFAULT_SCAN_MODEL = "general"
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./quantumshield_general.db")
-BANKING_DATABASE_URL = os.getenv("BANKING_DATABASE_URL", "sqlite:///./quantumshield_banking.db")
+NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL", "").strip()
+
+DATABASE_URL = (
+    os.getenv("DATABASE_URL", "").strip()
+    or NEON_DATABASE_URL
+    or "sqlite:///./quantumshield_general.db"
+)
+BANKING_DATABASE_URL = (
+    os.getenv("BANKING_DATABASE_URL", "").strip()
+    or NEON_DATABASE_URL
+    or "sqlite:///./quantumshield_banking.db"
+)
 
 DATABASE_URLS: dict[str, str] = {
     "general": DATABASE_URL,
