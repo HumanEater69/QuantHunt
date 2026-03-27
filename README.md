@@ -1,6 +1,6 @@
 # QuantumShield MVP
 
-FastAPI + scanner engine + glass/clay neon dashboard for HNDL-focused PQC posture assessment.
+FastAPI + scanner engine + glass/clay dashboard for HNDL-focused PQC posture assessment.
 
 ## Run
 
@@ -50,21 +50,14 @@ Configure backend deployment secrets:
 "https://<your-backend-host>" | gh secret set BACKEND_ORIGIN
 ```
 
-### Database (Neon)
+### Database
 
-Backend DB URLs are configured from environment variables in this order:
+Backend DB URLs are configured from environment variables:
 
-- `DATABASE_URL` (preferred)
-- `BANKING_DATABASE_URL` (optional override for banking model)
-- `NEON_DATABASE_URL` (shared fallback for both models)
+- `DATABASE_URL` (general model)
+- `BANKING_DATABASE_URL` (banking model, optional override)
 
-Set a Neon Postgres connection string in `NEON_DATABASE_URL` (or `DATABASE_URL`).
-
-If you are using Neon REST API separately, keep it in your own env var (for example `NEON_REST_API_URL`) and API key env var in your backend host.
-
-Example Neon REST endpoint provided:
-
-- `https://ep-withered-feather-a8q01x6f.apirest.eastus2.azure.neon.tech/neondb/rest/v1`
+If not set, the app falls back to local SQLite files for both models.
 
 ### Frontend (Vercel)
 
@@ -89,7 +82,9 @@ Get-Content frontend\.vercel\project.json
 "<vercel-project-id>" | gh secret set VERCEL_PROJECT_ID
 ```
 
-Frontend API calls use `/api/*`, and `frontend/vercel.json` rewrites those requests to your backend host.
+Frontend API calls use `/api/*`, and `frontend/vercel.json` rewrites those requests to Railway backend:
+
+- `https://quanthunt-fullstack-production.up.railway.app/api/*`
 
 ## Deep Clean Smoke Test (One Command)
 
