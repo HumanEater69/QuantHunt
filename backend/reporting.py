@@ -256,12 +256,18 @@ def _fit_text(c: canvas.Canvas, text: str, font_name: str, font_size: float, max
             high = mid - 1
     return value[:low] + ellipsis
 
-def build_quantum_certificate(scan: dict, avg_risk: float) -> bytes:
+def build_quantum_certificate(
+    scan: dict,
+    avg_risk: float,
+    eligible: bool = True,
+    reasons: list[str] | None = None,
+) -> bytes:
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=landscape(A4))
     w, h = A4
     w, h = h, w
     label = readiness_label(avg_risk)
+    fail_reasons = list(reasons or [])
     issued_at = datetime.now(timezone.utc)
     valid_until = issued_at + timedelta(days=365)
     margin = 38
@@ -270,39 +276,71 @@ def build_quantum_certificate(scan: dict, avg_risk: float) -> bytes:
     inner_w = w - (margin * 2)
     inner_h = h - (margin * 2)
 
-    c.setFillColor(colors.HexColor("#f7f0df"))
+    page_bg = "#f7f0df" if eligible else "#f6e7e9"
+    inner_bg = "#efe2c7" if eligible else "#edd3d7"
+    border_col = "#c8a867" if eligible else "#b06673"
+    text_primary = "#6d541f" if eligible else "#7a2635"
+    text_secondary = "#8d6e31" if eligible else "#9b3c4d"
+    text_domain = "#654f1f" if eligible else "#6a1f2c"
+
+    c.setFillColor(colors.HexColor(page_bg))
     c.rect(0, 0, w, h, fill=1, stroke=0)
-    c.setFillColor(colors.HexColor("#efe2c7"))
+    c.setFillColor(colors.HexColor(inner_bg))
     c.roundRect(inner_x, inner_y, inner_w, inner_h, 18, fill=1, stroke=0)
 
-    c.setStrokeColor(colors.HexColor("#c8a867"))
+    c.setStrokeColor(colors.HexColor(border_col))
     c.setLineWidth(1.8)
     c.roundRect(inner_x + 8, inner_y + 8, inner_w - 16, inner_h - 16, 16, fill=0, stroke=1)
 
     c.setLineWidth(0.5)
     c.roundRect(inner_x + 12, inner_y + 12, inner_w - 24, inner_h - 24, 12, fill=0, stroke=1)
 
-    _draw_logo_watermark(c, w, h, "QH_CERT_LOGO_PATH", "QUANTHUNT CERTIFIED", opacity=0.09)
+    _draw_logo_watermark(
+        c,
+        w,
+        h,
+        "QH_CERT_LOGO_PATH",
+        "QUANTHUNT CERTIFIED" if eligible else "QUANTHUNT FAILED",
+        opacity=0.09,
+    )
 
     top = h - 100
 
-    c.setFillColor(colors.HexColor("#6d541f"))
+    c.setFillColor(colors.HexColor(text_primary))
     c.setFont("Times-Bold", 36)
-    c.drawCentredString(w / 2, top, "CERTIFICATE OF PQC READINESS")
+    c.drawCentredString(
+        w / 2,
+        top,
+        "CERTIFICATE OF PQC READINESS" if eligible else "PQC READINESS FAILURE CERTIFICATE",
+    )
 
-    c.setFillColor(colors.HexColor("#8d6e31"))
+    c.setFillColor(colors.HexColor(text_secondary))
     c.setFont("Times-Italic", 15)
-    c.drawCentredString(w / 2, top - 32, "This certificate acknowledges that the domain")
+    c.drawCentredString(
+        w / 2,
+        top - 32,
+        "This certificate acknowledges that the domain"
+        if eligible
+        else "This document certifies the domain failed strict PQC readiness checks",
+    )
 
-    c.setFillColor(colors.HexColor("#654f1f"))
+    c.setFillColor(colors.HexColor(text_domain))
     c.setFont("Times-Bold", 32)
     c.drawCentredString(w / 2, top - 75, str(scan.get("domain", "unknown")))
 
-    c.setFillColor(colors.HexColor("#8d6e31"))
+    c.setFillColor(colors.HexColor(text_secondary))
     c.setFont("Times-Italic", 15)
-    c.drawCentredString(w / 2, top - 115, "has undergone rigorous Cyber PQC Posture Assessment and achieved a")
+    c.drawCentredString(
+        w / 2,
+        top - 115,
+        "has undergone rigorous Cyber PQC Posture Assessment and achieved a"
+        if eligible
+        else "after rigorous Cyber PQC Posture Assessment, readiness criteria were not met",
+    )
 
-    if label == "Quantum-Safe":
+    if not eligible:
+        badge_color = colors.HexColor("#8b2f2f")
+    elif label == "Quantum-Safe":
         badge_color = colors.HexColor("#2d6e4d")
     elif label == "PQC Ready":
         badge_color = colors.HexColor("#8a6a22")
@@ -314,7 +352,7 @@ def build_quantum_certificate(scan: dict, avg_risk: float) -> bytes:
     box_x = (w - box_w) / 2
     box_y = top - 185
 
-    c.setFillColor(colors.HexColor("#f9f0dc"))
+    c.setFillColor(colors.HexColor("#f9f0dc" if eligible else "#f6dde1"))
     c.roundRect(box_x - 10, box_y - 10, box_w + 20, box_h + 20, 8, fill=1, stroke=0)
 
     c.setFillColor(badge_color)
@@ -322,40 +360,67 @@ def build_quantum_certificate(scan: dict, avg_risk: float) -> bytes:
 
     c.setFillColor(colors.white)
     c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(w / 2, box_y + 16, f"Readiness Label: {label}")
+    c.drawCentredString(
+        w / 2,
+        box_y + 16,
+        f"Readiness Label: {label}" if eligible else "Readiness Label: FAILED",
+    )
 
     info_y = box_y - 45
-    c.setFillColor(colors.HexColor("#654f1f"))
+    c.setFillColor(colors.HexColor(text_domain))
     c.setFont("Helvetica", 12)
     c.drawCentredString(w / 2, info_y, f"Average HNDL Risk Score: {avg_risk:.2f}")
+
+    if not eligible:
+        reason_top = info_y - 26
+        c.setFillColor(colors.HexColor("#742b39"))
+        c.setFont("Helvetica-Bold", 11)
+        c.drawCentredString(w / 2, reason_top, "FAILURE REASONS")
+        c.setFont("Helvetica", 10)
+        y = reason_top - 16
+        for reason in fail_reasons[:5]:
+            line = _fit_text(c, f"- {reason}", "Helvetica", 10, inner_w - 140)
+            c.drawString(inner_x + 70, y, line)
+            y -= 14
 
     bot_y = inner_y + 70
 
     left_x = inner_x + 140
-    c.setFillColor(colors.HexColor("#6e5626"))
+    c.setFillColor(colors.HexColor("#6e5626" if eligible else "#6b2b39"))
     c.setFont("Helvetica", 12)
     c.drawCentredString(left_x, bot_y, issued_at.strftime("%d %b %Y"))
-    c.setStrokeColor(colors.HexColor("#b49352"))
+    c.setStrokeColor(colors.HexColor("#b49352" if eligible else "#b56f7d"))
     c.line(left_x - 80, bot_y - 12, left_x + 80, bot_y - 12)
     c.setFont("Helvetica", 10)
     c.drawCentredString(left_x, bot_y - 25, "Date of Issue")
 
     seal_cx = w / 2
     seal_cy = bot_y + 10
-    _draw_gold_seal(c, seal_cx, seal_cy, 45, (os.getenv("QH_CERT_SEAL_TEXT") or "Quantum Verified").strip())
+    _draw_gold_seal(
+        c,
+        seal_cx,
+        seal_cy,
+        45,
+        (os.getenv("QH_CERT_SEAL_TEXT") or ("Quantum Verified" if eligible else "Readiness Failed")).strip(),
+    )
 
     right_x = w - inner_x - 140
     c.setFont("Helvetica-Oblique", 14)
     sig_drawn = _draw_optional_image(c, "QH_CERT_SIGNATURE_PATH", right_x - 60, bot_y - 10, 120, 40)
     if not sig_drawn:
         c.drawCentredString(right_x, bot_y, (os.getenv("QH_TEAM_SIGNATURE") or "QuantHunt Security").strip())
-    c.setStrokeColor(colors.HexColor("#b49352"))
+    c.setStrokeColor(colors.HexColor("#b49352" if eligible else "#b56f7d"))
     c.line(right_x - 90, bot_y - 12, right_x + 90, bot_y - 12)
     c.setFont("Helvetica", 10)
     c.drawCentredString(right_x, bot_y - 25, "Authorized Signature")
 
     c.setFont("Helvetica", 8)
-    c.drawCentredString(w / 2, inner_y + 20, f"Scan ID: {scan.get('scan_id', 'n/a')}  |  Valid through: {valid_until.strftime('%d %b %Y')}")
+    foot = (
+        f"Scan ID: {scan.get('scan_id', 'n/a')}  |  Valid through: {valid_until.strftime('%d %b %Y')}"
+        if eligible
+        else f"Scan ID: {scan.get('scan_id', 'n/a')}  |  Status: Failed strict PQC readiness"
+    )
+    c.drawCentredString(w / 2, inner_y + 20, foot)
 
     c.save()
     return buf.getvalue()

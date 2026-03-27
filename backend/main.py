@@ -181,10 +181,10 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
     avg_risk = sum(scores) / max(len(scores), 1)
     reasons: list[str] = []
 
-    # Tighten certification bar so weak/uncertain scans are not marked certified.
-    if avg_risk > 70:
+    # Tightened bar: require stronger aggregate posture.
+    if avg_risk > 60:
         reasons.append(
-            f"Average HNDL risk {avg_risk:.2f} exceeds certification threshold (<= 70)."
+            f"Average HNDL risk {avg_risk:.2f} exceeds certification threshold (<= 60)."
         )
 
     unknown_tls_assets = []
@@ -202,14 +202,31 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
         )
 
     critical_assets = []
+    warning_assets = []
     for f in findings:
-        if f.get("key_exchange_status") == "CRITICAL" or f.get("auth_status") == "CRITICAL":
+        statuses = [
+            str(f.get("key_exchange_status") or ""),
+            str(f.get("auth_status") or ""),
+            str(f.get("tls_status") or ""),
+            str(f.get("cert_algo_status") or ""),
+            str(f.get("symmetric_status") or ""),
+        ]
+        if any(s.upper() == "CRITICAL" for s in statuses):
             critical_assets.append(str(f.get("asset") or "unknown"))
+        if any(s.upper() == "WARNING" for s in statuses):
+            warning_assets.append(str(f.get("asset") or "unknown"))
     if critical_assets:
         reasons.append(
             f"Critical cryptographic posture detected on {len(critical_assets)} asset(s): "
             + ", ".join(critical_assets[:8])
             + (" ..." if len(critical_assets) > 8 else "")
+        )
+
+    # Additional strictness: too many transitional warnings cannot be certified.
+    warning_ratio = len(set(warning_assets)) / max(len(findings), 1)
+    if warning_ratio > 0.35:
+        reasons.append(
+            f"Warning-level posture remains high ({warning_ratio * 100:.1f}% of assets; allowed <= 35.0%)."
         )
 
     cbom = scan.get("cbom") or {}
@@ -1364,21 +1381,13 @@ async def get_scan_certificate(scan_id: str) -> Response:
             detail="Scan findings are required before certificate generation",
         )
     eligible, reasons, avg_risk = _certificate_eligibility(scan)
-    if not eligible:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Not QuantHunt Certified",
-                "avg_hndl_risk": avg_risk,
-                "reasons": reasons,
-            },
-        )
-    pdf = build_quantum_certificate(scan, avg_risk)
+    pdf = build_quantum_certificate(scan, avg_risk, eligible=eligible, reasons=reasons)
+    certificate_kind = "pass" if eligible else "failed"
     return Response(
         content=pdf,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=quanthunt-certificate-{scan_id}.pdf"
+            "Content-Disposition": f"attachment; filename=quanthunt-certificate-{certificate_kind}-{scan_id}.pdf"
         },
     )
 
@@ -1440,17 +1449,9 @@ async def generate_pdf_on_demand(req: PdfGenerateRequest) -> Response:
 
     if req.kind == "certificate":
         eligible, reasons, avg_risk = _certificate_eligibility(scan)
-        if not eligible:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "Not QuantHunt Certified",
-                    "avg_hndl_risk": avg_risk,
-                    "reasons": reasons,
-                },
-            )
-        pdf = build_quantum_certificate(scan, avg_risk)
-        filename = f"quanthunt-certificate-{scan.get('scan_id', target_scan_id)}.pdf"
+        pdf = build_quantum_certificate(scan, avg_risk, eligible=eligible, reasons=reasons)
+        certificate_kind = "pass" if eligible else "failed"
+        filename = f"quanthunt-certificate-{certificate_kind}-{scan.get('scan_id', target_scan_id)}.pdf"
     else:
         pdf = build_scan_pdf(scan)
         filename = f"quanthunt-{scan.get('scan_id', target_scan_id)}-report.pdf"
