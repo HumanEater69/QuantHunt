@@ -234,7 +234,8 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
         )
 
     critical_assets = []
-    warning_assets = []
+    warning_count = 0
+    total_status_checks = 0
     for f in findings:
         statuses = [
             str(f.get("key_exchange_status") or ""),
@@ -243,10 +244,10 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
             str(f.get("cert_algo_status") or ""),
             str(f.get("symmetric_status") or ""),
         ]
+        total_status_checks += len(statuses)
         if any(s.upper() == "CRITICAL" for s in statuses):
             critical_assets.append(str(f.get("asset") or "unknown"))
-        if any(s.upper() == "WARNING" for s in statuses):
-            warning_assets.append(str(f.get("asset") or "unknown"))
+        warning_count += sum(1 for s in statuses if s.upper() == "WARNING")
     critical_ratio = len(set(critical_assets)) / max(len(findings), 1)
     if critical_assets and critical_ratio > critical_ratio_threshold:
         reasons.append(
@@ -255,10 +256,10 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
             + (" ..." if len(critical_assets) > 8 else "")
         )
 
-    warning_ratio = len(set(warning_assets)) / max(len(findings), 1)
+    warning_ratio = warning_count / max(total_status_checks, 1)
     if warning_ratio > warning_ratio_threshold:
         reasons.append(
-            f"Warning-level posture remains high ({warning_ratio * 100:.1f}% of assets; allowed <= {warning_ratio_threshold * 100:.1f}% at strictness {strictness_pct:.0f}%)."
+            f"Warning-level posture remains high ({warning_ratio * 100:.1f}% warning density; allowed <= {warning_ratio_threshold * 100:.1f}% at strictness {strictness_pct:.0f}%)."
         )
 
     cbom = scan.get("cbom") or {}
