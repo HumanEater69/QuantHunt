@@ -84,6 +84,7 @@ REUSE_COMPLETED_SCANS = os.getenv("REUSE_COMPLETED_SCANS", "false").lower() == "
 VPN_BLOCK_ENABLED = os.getenv("VPN_BLOCK_ENABLED", "true").lower() == "true"
 VPN_BLOCK_ON_PROXY = os.getenv("VPN_BLOCK_ON_PROXY", "true").lower() == "true"
 VPN_BLOCK_ON_HOSTING = os.getenv("VPN_BLOCK_ON_HOSTING", "true").lower() == "true"
+VPN_ENFORCE_BLOCK = os.getenv("VPN_ENFORCE_BLOCK", "false").lower() == "true"
 VPN_CHECK_TIMEOUT_SEC = float(os.getenv("VPN_CHECK_TIMEOUT_SEC", "2.5"))
 VPN_CACHE_TTL_SEC = float(os.getenv("VPN_CACHE_TTL_SEC", "300"))
 VPN_GEO_ENDPOINT = os.getenv("VPN_GEO_ENDPOINT", "http://ip-api.com/json")
@@ -485,7 +486,9 @@ async def _check_vpn_block(ip: str) -> tuple[bool, str]:
                 )
                 score, score_reasons = _vpn_signal_score(data)
                 all_reasons = list(dict.fromkeys([*reasons, *score_reasons]))
-                blocked = bool(reasons) or score >= VPN_SCORE_THRESHOLD
+                blocked = VPN_ENFORCE_BLOCK and (
+                    bool(reasons) or score >= VPN_SCORE_THRESHOLD
+                )
                 reason = ", ".join(all_reasons) if all_reasons else ""
     except Exception:
         blocked = False

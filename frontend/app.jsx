@@ -9720,7 +9720,7 @@ function App() {
     typeof window !== "undefined" ? window.innerWidth < 980 : false,
   );
   const [clock, setClock] = useState(new Date());
-  const vpnOverlayActive = Boolean(networkStatus?.vpn_detected);
+  const vpnOverlayActive = Boolean(networkStatus?.blocked);
 
   const refreshNetworkStatus = () => {
     fetch(`${API}/api/network-status`)
