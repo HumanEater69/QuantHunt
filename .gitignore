@@ -1,2 +1,10 @@
 # Frontend platform artifacts
 .netlify
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local deploy staging area
+_railway_stage/
