@@ -8045,6 +8045,36 @@ function PQCLatencyTab({ scanModel = "general" }) {
     },
   };
 
+  const baselineRttDisplay = Number(
+    remoteMetrics?.live_app_inputs?.measured_rtt_ms ?? rttMs,
+  );
+  const baselineTtfbDisplay = Number(
+    remoteMetrics?.live_app_inputs?.baseline_ttfb_ms ??
+      outputBlock.classical_metrics.total_handshake_ttfb_ms ??
+      localTtfb,
+  );
+  const hybridPayloadForMath = 16800;
+  const hybridSegmentsDisplay = Number(
+    outputBlock.pqc_hybrid_metrics.tcp_segments_required ??
+      Math.ceil(hybridPayloadForMath / MSS),
+  );
+  const extraFlightsDisplay = Number(
+    outputBlock.pqc_hybrid_metrics.extra_tcp_flights ??
+      (hybridSegmentsDisplay <= IW
+        ? 0
+        : Math.ceil(Math.log2(hybridSegmentsDisplay / IW + 1))),
+  );
+  const hybridTtfbDisplay = Number(
+    outputBlock.pqc_hybrid_metrics.total_handshake_ttfb_ms ?? ttfb ?? localTtfb,
+  );
+  const latencyDegradationDisplay = Number(
+    outputBlock.pqc_hybrid_metrics.latency_degradation_percentage ??
+      headline.latency_degradation_percentage ??
+      (baselineTtfbDisplay > 0
+        ? ((hybridTtfbDisplay - baselineTtfbDisplay) / baselineTtfbDisplay) * 100
+        : 0),
+  );
+
   const fragments = useMemo(
     () =>
       Array.from({ length: nSeg }, (_, i) => {
@@ -8751,6 +8781,60 @@ function PQCLatencyTab({ scanModel = "general" }) {
             >
               thresholds(ms): Safe &lt; 100 | Warning 100-300 | Critical &gt;
               300
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            border: `1px solid ${C.border}`,
+            borderRadius: 14,
+            padding: 12,
+            background:
+              "linear-gradient(145deg, rgba(255,245,214,0.56), rgba(219,241,229,0.48))",
+            boxShadow:
+              "inset 0 1px 0 rgba(255,255,255,0.8), 0 12px 24px rgba(106,95,70,0.1)",
+            display: "grid",
+            gap: 8,
+          }}
+        >
+          <div style={{ color: C.dim, fontFamily: "JetBrains Mono", fontSize: 10 }}>
+            LATENCY PROOF PANEL
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
+              gap: 8,
+              fontFamily: "JetBrains Mono",
+              fontSize: 11,
+            }}
+          >
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 10px", background: "rgba(255,255,255,0.28)" }}>
+              <div style={{ color: C.dim, marginBottom: 4 }}>Baseline RTT (ms)</div>
+              <div style={{ color: C.text }}>
+                Current ping = {baselineRttDisplay.toFixed(2)} ms
+              </div>
+            </div>
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 10px", background: "rgba(255,255,255,0.28)" }}>
+              <div style={{ color: C.dim, marginBottom: 4 }}>TCP Segments Required</div>
+              <div style={{ color: C.text }}>
+                ceil(S_TLS/MSS) = ceil({hybridPayloadForMath}/{MSS}) = {hybridSegmentsDisplay}
+              </div>
+            </div>
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 10px", background: "rgba(255,255,255,0.28)" }}>
+              <div style={{ color: C.dim, marginBottom: 4 }}>Extra TCP Flights</div>
+              <div style={{ color: C.text }}>
+                {hybridSegmentsDisplay > IW
+                  ? `N_seg(${hybridSegmentsDisplay}) > iw(${IW}) -> extra_flights = ${extraFlightsDisplay}`
+                  : `N_seg(${hybridSegmentsDisplay}) <= iw(${IW}) -> extra_flights = 0`}
+              </div>
+            </div>
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 10px", background: "rgba(255,255,255,0.28)" }}>
+              <div style={{ color: C.dim, marginBottom: 4 }}>Latency Degradation %</div>
+              <div style={{ color: C.text }}>
+                (({hybridTtfbDisplay.toFixed(2)} - {baselineTtfbDisplay.toFixed(2)}) / {baselineTtfbDisplay > 0 ? baselineTtfbDisplay.toFixed(2) : "baseline"}) x 100 = {latencyDegradationDisplay.toFixed(2)}%
+              </div>
             </div>
           </div>
         </div>

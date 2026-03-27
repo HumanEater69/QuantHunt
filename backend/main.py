@@ -1013,6 +1013,32 @@ async def pqc_simulate(req: PqcSimRequest) -> dict:
                 "total_handshake_ttfb_ms": hybrid["total_latency_ms"],
                 "latency_degradation_percentage": round(increase_pct_classical, 2),
             },
+            "proof_panel": {
+                "baseline_rtt": {
+                    "label": "Baseline RTT (ms)",
+                    "value_ms": round(float(rtt), 2),
+                    "formula": "Current ping = measured_rtt_ms",
+                },
+                "tcp_segments_required": {
+                    "label": "TCP Segments Required",
+                    "value": hybrid["segments"],
+                    "formula": f"ceil(S_TLS/MSS) = ceil({hybrid_size}/{mss})",
+                },
+                "extra_tcp_flights": {
+                    "label": "Extra TCP Flights",
+                    "value": hybrid["extra_flights"],
+                    "formula": (
+                        f"N_seg({hybrid['segments']}) > iw({iw})"
+                        if hybrid["segments"] > iw
+                        else f"N_seg({hybrid['segments']}) <= iw({iw})"
+                    ),
+                },
+                "latency_degradation": {
+                    "label": "Latency Degradation %",
+                    "value_pct": round(latency_degradation_pct, 2),
+                    "formula": "((hybrid_ttfb_ms - baseline_ttfb_ms) / baseline_ttfb_ms) x 100",
+                },
+            },
             "dependent_variables": {
                 "required_tcp_segments_n_seg": hybrid["segments"],
                 "extra_tcp_flights": hybrid["extra_flights"],
