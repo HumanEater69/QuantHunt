@@ -2748,6 +2748,11 @@ function ScannerTab({
   const [showFleetStatusModal, setShowFleetStatusModal] = useState(false);
   const [fleetStatusQuery, setFleetStatusQuery] = useState("");
   const [fleetStatusFilter, setFleetStatusFilter] = useState("all");
+  const [boardroomView, setBoardroomView] = useState({
+    ready: null,
+    why: "Run a completed scan to generate board-level PQC readiness insight.",
+    actions: [],
+  });
   const logRef = useRef(null);
 
   useEffect(() => {
@@ -2817,6 +2822,21 @@ function ScannerTab({
           .filter(Boolean),
       ),
     );
+
+  const topThreeActions = (findings = []) => {
+    const all = (findings || [])
+      .flatMap((f) => (Array.isArray(f?.recommendations) ? f.recommendations : []))
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    const unique = Array.from(new Set(all));
+    if (unique.length >= 3) return unique.slice(0, 3);
+    const fallback = [
+      "Replace classical-only key exchange with hybrid/PQC-capable profile.",
+      "Rotate certificate/signature chains to NIST PQC transition roadmap.",
+      "Harden TLS policy to remove weak legacy suites and enforce modern baseline.",
+    ];
+    return [...unique, ...fallback].slice(0, 3);
+  };
 
   const downloadArtifact = async (path, fallbackName) => {
     const r = await fetch(`${API}${path}`);
@@ -2905,6 +2925,11 @@ function ScannerTab({
     const d = await r.json();
     setScanId(d.scan_id);
     setFormula(null);
+    setBoardroomView({
+      ready: null,
+      why: "Scan started. Boardroom summary will populate when scan completes.",
+      actions: [],
+    });
 
     if (d.reused && d.status === "completed") {
       const detail = await loadScanDetail(d.scan_id);
@@ -3006,21 +3031,35 @@ function ScannerTab({
     if (!scanData?.scan?.scan_id || scanData?.scan?.status !== "completed")
       return;
     let alive = true;
-    fetch(`${API}/api/scan/${scanData.scan.scan_id}/findings`)
-      .then((r) => (r.ok ? r.json() : { findings: [] }))
-      .then((d) => {
-        if (!alive) return;
-        setFormula(computeHndlBreakdown(d.findings || []));
-      })
-      .catch(() => {
-        if (alive) setFormula(null);
-      });
+    Promise.all([
+      fetch(`${API}/api/scan/${scanData.scan.scan_id}/findings`)
+        .then((r) => (r.ok ? r.json() : { findings: [] }))
+        .catch(() => ({ findings: [] })),
+      fetch(`${API}/api/scan/${scanData.scan.scan_id}/certification-status`)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+    ]).then(([d, status]) => {
+      if (!alive) return;
+      const findings = d?.findings || [];
+      const nextFormula = computeHndlBreakdown(findings);
+      setFormula(nextFormula);
 
-    fetch(`${API}/api/scan/${scanData.scan.scan_id}/certification-status`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((status) => {
-        if (!alive || !status || status.eligible) return;
-        const reasons = Array.isArray(status.reasons) ? status.reasons : [];
+      const actions = topThreeActions(findings);
+      const reasons = Array.isArray(status?.reasons) ? status.reasons : [];
+      const leadReason = reasons[0] || "Strict readiness checks are still in progress.";
+
+      if (status && status.eligible) {
+        setBoardroomView({
+          ready: true,
+          why: `Strict certification checks passed (Avg HNDL: ${status.avg_hndl_risk ?? "n/a"}).`,
+          actions,
+        });
+      } else if (status && !status.eligible) {
+        setBoardroomView({
+          ready: false,
+          why: leadReason,
+          actions,
+        });
         const reasonText = reasons.length
           ? reasons.map((x, i) => `${i + 1}. ${x}`).join("\n")
           : "Certification eligibility checks failed.";
@@ -3033,8 +3072,17 @@ function ScannerTab({
             `Avg HNDL Risk: ${status.avg_hndl_risk ?? "n/a"}\n` +
             `${reasonText}`,
         });
-      })
-      .catch(() => {});
+      } else {
+        const inferredReady = Number(nextFormula.total || 0) <= 35;
+        setBoardroomView({
+          ready: inferredReady,
+          why: inferredReady
+            ? "Observed posture indicates low risk in current scan evidence."
+            : "Observed posture still includes medium/high crypto risk exposure.",
+          actions,
+        });
+      }
+    });
 
     return () => {
       alive = false;
@@ -3251,6 +3299,37 @@ function ScannerTab({
         <h3 style={{ fontFamily: "Orbitron", color: C.cyan, marginTop: 0 }}>
           <PressureText glow={C.cyan}>DOMAIN RADAR</PressureText>
         </h3>
+        <div
+          style={{
+            marginBottom: 12,
+            border: `1px solid ${boardroomView.ready === false ? C.red : C.border}`,
+            borderRadius: 14,
+            padding: 12,
+            background:
+              boardroomView.ready === false
+                ? "linear-gradient(145deg, rgba(250,225,224,0.9), rgba(239,206,206,0.74))"
+                : "linear-gradient(145deg, rgba(255,248,225,0.92), rgba(214,241,226,0.78))",
+            boxShadow:
+              "inset 0 1px 0 rgba(255,255,255,0.9), 0 14px 30px rgba(111,102,76,0.14)",
+            fontFamily: "JetBrains Mono",
+            fontSize: 12,
+            lineHeight: 1.55,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "Orbitron",
+              color: boardroomView.ready === false ? C.red : C.green,
+              fontSize: 12,
+              marginBottom: 6,
+            }}
+          >
+            BOARDROOM VIEW
+          </div>
+          <div style={{ color: C.text }}>
+            Is this bank PQC-ready today: {boardroomView.ready === null ? "PENDING" : boardroomView.ready ? "YES (GREEN)" : "NO (RED)"} | Why: {boardroomView.why} | Top 3 actions: {(boardroomView.actions || []).length ? boardroomView.actions.map((x, i) => `${i + 1}) ${x}`).join(" ; ") : "1) Complete scan 2) Review findings 3) Apply remediation roadmap"}
+          </div>
+        </div>
         {flashMessage && (
           <div
             style={{
