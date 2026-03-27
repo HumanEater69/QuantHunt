@@ -71,6 +71,10 @@ class TLSInfo(BaseModel):
     cert_not_after: str | None = None
     cert_sig_algo: str | None = None
     accepted_ciphers: list[str] = Field(default_factory=list)
+    supported_cipher_suites: list[str] = Field(default_factory=list)
+    cipher_components: dict[str, Any] = Field(default_factory=dict)
+    cipher_metadata: dict[str, Any] = Field(default_factory=dict)
+    supported_cipher_analysis: list[dict[str, Any]] = Field(default_factory=list)
     hsts_present: bool = False
     ocsp_stapling: bool = False
     scan_error: str | None = None

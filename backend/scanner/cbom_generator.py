@@ -41,6 +41,17 @@ def _signature_algorithm_family(sig_algo: str | None) -> str:
         return "classical"
     return "unknown"
 
+
+def _cipher_component_value(tls_obj: object, key: str) -> str:
+    components = getattr(tls_obj, "cipher_components", {}) or {}
+    value = components.get(key)
+    return str(value or "unknown")
+
+
+def _cipher_component_bool(tls_obj: object, key: str) -> bool:
+    components = getattr(tls_obj, "cipher_components", {}) or {}
+    return bool(components.get(key, False))
+
 def build_cbom(domain: str, findings: list[AssetFinding]) -> dict[str, Any]:
     components: list[dict[str, Any]] = []
     for f in findings:
@@ -74,6 +85,19 @@ def build_cbom(domain: str, findings: list[AssetFinding]) -> dict[str, Any]:
                         "keyExchangeAlgorithm": key_exchange_algo,
                         "primaryCipherSuite": f.tls.cipher_suite or "unknown",
                         "cipherSuites": f.tls.accepted_ciphers or ([f.tls.cipher_suite] if f.tls.cipher_suite else []),
+                        "supportedCipherSuiteCount": len(getattr(f.tls, "supported_cipher_suites", []) or []),
+                        "negotiatedCipherAnalysis": {
+                            "keyExchange": _cipher_component_value(f.tls, "key_exchange"),
+                            "authentication": _cipher_component_value(f.tls, "authentication"),
+                            "bulkCipher": _cipher_component_value(f.tls, "bulk_cipher"),
+                            "mode": _cipher_component_value(f.tls, "mode"),
+                            "hash": _cipher_component_value(f.tls, "hash"),
+                            "aead": _cipher_component_bool(f.tls, "aead"),
+                            "forwardSecrecy": _cipher_component_bool(f.tls, "forward_secrecy"),
+                            "pqcSignal": _cipher_component_bool(f.tls, "pqc_signal"),
+                            "securityLevel": _cipher_component_value(f.tls, "security_level"),
+                        },
+                        "supportedCipherAnalyses": getattr(f.tls, "supported_cipher_analysis", []) or [],
                         "ikev2TransformTypes": [{"type": "keyExchange", "id": key_exchange_algo}],
                     },
                 },
@@ -90,6 +114,16 @@ def build_cbom(domain: str, findings: list[AssetFinding]) -> dict[str, Any]:
                     {"name": "primary-cipher-suite", "value": f.tls.cipher_suite or "unknown"},
                     {"name": "signature-algorithm", "value": f.tls.cert_sig_algo or "unknown"},
                     {"name": "signature-family", "value": signature_family},
+                    {"name": "cipher-kx", "value": _cipher_component_value(f.tls, "key_exchange")},
+                    {"name": "cipher-authentication", "value": _cipher_component_value(f.tls, "authentication")},
+                    {"name": "cipher-bulk", "value": _cipher_component_value(f.tls, "bulk_cipher")},
+                    {"name": "cipher-mode", "value": _cipher_component_value(f.tls, "mode")},
+                    {"name": "cipher-hash", "value": _cipher_component_value(f.tls, "hash")},
+                    {"name": "cipher-security-level", "value": _cipher_component_value(f.tls, "security_level")},
+                    {"name": "cipher-aead", "value": str(_cipher_component_bool(f.tls, "aead")).lower()},
+                    {"name": "cipher-forward-secrecy", "value": str(_cipher_component_bool(f.tls, "forward_secrecy")).lower()},
+                    {"name": "cipher-pqc-signal", "value": str(_cipher_component_bool(f.tls, "pqc_signal")).lower()},
+                    {"name": "supported-cipher-suite-count", "value": str(len(getattr(f.tls, "supported_cipher_suites", []) or []))},
                     {"name": "tls-scan-error", "value": f.tls.scan_error or ""},
                     {"name": "nist-fips-203-signal-detected", "value": str(fips203).lower()},
                     {"name": "nist-fips-204-signal-detected", "value": str(fips204).lower()},

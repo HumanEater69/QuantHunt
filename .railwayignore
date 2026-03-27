@@ -1,0 +1,16 @@
+.git
+.venv
+.vscode
+__pycache__/
+**/__pycache__/
+runlogs/
+backend/__pycache__/
+backend/scanner/__pycache__/
+scripts/__pycache__/
+tests/__pycache__/
+*.log
+*.zip
+*.bak
+quantumshield.db
+quantumshield_general.db
+quantumshield_banking.db

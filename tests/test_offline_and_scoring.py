@@ -11,6 +11,7 @@ from backend.main import (
 from backend.models import APIInfo, AssetFinding, TLSInfo
 from backend.reporting import readiness_label
 from backend.scanner.cbom_generator import build_cbom
+from backend.scanner.cipher_parser import parse_cipher_suite
 from backend.scanner.pqc_engine import classify_key_exchange, classify_tls_version, hndl_score, label_for_score
 
 CTX = """Source=backend
@@ -57,6 +58,13 @@ class RiskModelTests(unittest.TestCase):
 
 
 class CbomLogicTests(unittest.TestCase):
+    def test_cipher_parser_decomposes_suite(self) -> None:
+        parsed = parse_cipher_suite("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384")
+        self.assertIn(parsed["key_exchange"], {"ECDHE", "ephemeral-dh"})
+        self.assertEqual(parsed["bulk_cipher"], "AES-256")
+        self.assertEqual(parsed["mode"], "GCM")
+        self.assertEqual(parsed["hash"], "SHA384")
+
     def test_cbom_quantum_safe_depends_on_nist_signal(self) -> None:
         finding = AssetFinding(
             asset="example.com",
@@ -79,7 +87,39 @@ class CbomLogicTests(unittest.TestCase):
     def test_cbom_includes_key_exchange_granularity(self) -> None:
         finding = AssetFinding(
             asset="hybrid.example",
-            tls=TLSInfo(host="hybrid.example", tls_version="TLSv1.3", cipher_suite="TLS_X25519_MLKEM768_AES_256_GCM_SHA384"),
+            tls=TLSInfo(
+                host="hybrid.example",
+                tls_version="TLSv1.3",
+                cipher_suite="TLS_X25519_MLKEM768_AES_256_GCM_SHA384",
+                supported_cipher_suites=[
+                    "TLS_AES_128_GCM_SHA256",
+                    "TLS_X25519_MLKEM768_AES_256_GCM_SHA384",
+                ],
+                cipher_components={
+                    "key_exchange": "hybrid-pqc-classical",
+                    "authentication": "certificate-signature",
+                    "bulk_cipher": "AES-256",
+                    "mode": "GCM",
+                    "hash": "SHA384",
+                    "aead": True,
+                    "forward_secrecy": True,
+                    "pqc_signal": True,
+                    "security_level": "pqc-capable",
+                },
+                supported_cipher_analysis=[
+                    {
+                        "suite": "TLS_AES_128_GCM_SHA256",
+                        "key_exchange": "(EC)DHE",
+                        "authentication": "certificate-signature",
+                        "bulk_cipher": "AES-128",
+                        "mode": "GCM",
+                        "hash": "SHA256",
+                        "forward_secrecy": True,
+                        "pqc_signal": False,
+                        "security_level": "strong",
+                    }
+                ],
+            ),
             api=APIInfo(host="hybrid.example"),
             key_exchange_status="SAFE",
             auth_status="WARNING",
@@ -91,9 +131,15 @@ class CbomLogicTests(unittest.TestCase):
             recommendations=[],
         )
         cbom = build_cbom("hybrid.example", [finding])
-        proto = cbom["components"][0]["cryptoProperties"]["protocolProperties"]
+        component = cbom["components"][0]
+        proto = component["cryptoProperties"]["protocolProperties"]
         self.assertIn("keyExchangeAlgorithm", proto)
         self.assertIn("primaryCipherSuite", proto)
+        self.assertIn("negotiatedCipherAnalysis", proto)
+        self.assertIn("supportedCipherAnalyses", proto)
+        props = {p["name"]: p["value"] for p in component["properties"]}
+        self.assertEqual(props["cipher-pqc-signal"], "true")
+        self.assertEqual(props["supported-cipher-suite-count"], "2")
 
 
 class CertificationEligibilityTests(unittest.TestCase):
