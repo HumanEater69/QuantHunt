@@ -13,11 +13,12 @@ uvicorn backend.main:app --reload --port 8000
 
 Open: `http://localhost:8000`
 
-## Deployment (Railway Backend)
+## Deployment
 
-This repo is configured for Railway backend deployment using GitHub Actions.
+This repo is configured for:
 
-- Backend deploy target: Railway service via native trigger/fallback deploy hook
+- Backend deployment on Railway (GitHub Actions)
+- Frontend deployment on Vercel (GitHub Actions)
 
 ### Current Deployment Workflow
 
@@ -52,6 +53,33 @@ Configure backend deployment secrets:
 "<backend-deploy-hook-url>" | gh secret set BACKEND_DEPLOY_HOOK_URL
 "https://quanthunt-fullstack-production.up.railway.app" | gh secret set BACKEND_ORIGIN
 ```
+
+### Frontend (Vercel)
+
+Frontend workflow:
+
+- `.github/workflows/frontend-vercel.yml`
+
+Required GitHub secrets:
+
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
+Set them from your local machine after linking the Vercel project:
+
+```powershell
+vercel link frontend
+Get-Content frontend\.vercel\project.json
+# Copy orgId and projectId values, then set secrets:
+"<vercel-token>" | gh secret set VERCEL_TOKEN
+"<vercel-org-id>" | gh secret set VERCEL_ORG_ID
+"<vercel-project-id>" | gh secret set VERCEL_PROJECT_ID
+```
+
+Frontend API calls use `/api/*`, and `frontend/vercel.json` rewrites those requests to Railway:
+
+- `https://quanthunt-fullstack-production.up.railway.app/api/*`
 
 ## Deep Clean Smoke Test (One Command)
 
