@@ -2021,6 +2021,8 @@ function Card({ children, style = {} }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
+        position: "relative",
+        zIndex: hover ? 40 : 1,
         background: dark
           ? "linear-gradient(160deg, #15243f 0%, #111d34 100%)"
           : "linear-gradient(160deg, #ebeff4 0%, #e1e6ed 100%)",
@@ -2033,7 +2035,7 @@ function Card({ children, style = {} }) {
           : dark
             ? "0 14px 28px rgba(3,8,16,0.58), inset 0 1px 0 rgba(144,166,194,0.14), inset 0 -1px 0 rgba(6,17,31,0.56)"
             : "9px 9px 19px rgba(168,184,206,0.4), -8px -8px 18px rgba(239,243,248,0.72), inset 0 1px 0 rgba(241,245,248,0.8), inset 0 -1px 0 rgba(183,198,219,0.4)",
-        transform: hover ? "translateY(-1px)" : "translateY(0)",
+        transform: hover ? "translateY(-1px)" : "none",
         transition: "all 180ms ease",
         ...style,
       }}
@@ -2137,6 +2139,7 @@ function LiquidSearchSelect({
       style={{
         position: "relative",
         minWidth,
+        zIndex: open ? 180 : "auto",
       }}
     >
       <button
@@ -2180,7 +2183,7 @@ function LiquidSearchSelect({
             top: "calc(100% + 6px)",
             left: 0,
             right: 0,
-            zIndex: 40,
+            zIndex: 220,
             borderRadius: 12,
             border: dark
               ? "1px solid rgba(121,189,159,0.42)"
