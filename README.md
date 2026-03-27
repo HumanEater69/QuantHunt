@@ -13,31 +13,19 @@ uvicorn backend.main:app --reload --port 8000
 
 Open: `http://localhost:8000`
 
-## Deployment Revamp (Netlify + Backend Hook)
+## Deployment (Railway Backend)
 
-This repo is now configured for Netlify frontend deployment and a free backend host via deploy hook.
+This repo is configured for Railway backend deployment using GitHub Actions.
 
-- Frontend deploy target: Netlify (`https://quanthunt.netlify.app`)
-- Backend deploy target: provider deploy hook
+- Backend deploy target: Railway service via native trigger/fallback deploy hook
 
-### Current Deployment Workflows
+### Current Deployment Workflow
 
-- `.github/workflows/frontend-netlify.yml`
 - `.github/workflows/backend-deploy.yml`
 
-Both workflows enforce backend regression tests (`tests.test_offline_and_scoring`) before deployment.
+The workflow enforces backend regression tests (`tests.test_offline_and_scoring`) before deployment.
 
-### Frontend (Netlify)
-
-The frontend is deployed from the `frontend/` directory using Netlify CLI.
-
-Required GitHub secrets for frontend workflow:
-
-- `NETLIFY_AUTH_TOKEN`
-- `NETLIFY_SITE_ID`
-- `NETLIFY_SITE_URL`
-
-### Backend (Free Candidate)
+### Backend
 
 Backend workflow triggers a provider deploy hook and probes health on:
 
@@ -52,27 +40,17 @@ Required GitHub secrets for backend workflow:
 - `BACKEND_DEPLOY_HOOK_URL`
 - `BACKEND_ORIGIN`
 
-Recommended backend candidate for current FastAPI codebase:
+Recommended backend target for current FastAPI codebase:
 
 - Railway FastAPI service: `https://quanthunt-fullstack-production.up.railway.app`
 
-Decision for this repo:
+### One-time GitHub Secrets Setup (Backend)
 
-- Use Netlify for frontend/custom domain delivery
-- Use backend deploy hook + `BACKEND_ORIGIN` probe to keep the backend platform interchangeable
-
-### One-time GitHub Secrets Setup
-
-You can configure required secrets in one command:
+Configure backend deployment secrets:
 
 ```powershell
-scripts\setup_github_secrets_netlify_backend.ps1 \
-	-Repo "HumanEater69/QuantHunt" \
-	-NetlifyAuthToken "<netlify-auth-token>" \
-	-NetlifySiteId "<netlify-site-id>" \
-	-NetlifySiteUrl "https://quanthunt.netlify.app" \
-	-BackendDeployHookUrl "<backend-deploy-hook-url>" \
-	-BackendOrigin "https://quanthunt-fullstack-production.up.railway.app"
+"<backend-deploy-hook-url>" | gh secret set BACKEND_DEPLOY_HOOK_URL
+"https://quanthunt-fullstack-production.up.railway.app" | gh secret set BACKEND_ORIGIN
 ```
 
 ## Deep Clean Smoke Test (One Command)

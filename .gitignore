@@ -1,6 +1,3 @@
-# Frontend platform artifacts
-.netlify
-
 # Python cache/build artifacts
 __pycache__/
 *.py[cod]
