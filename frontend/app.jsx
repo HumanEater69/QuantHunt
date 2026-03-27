@@ -9720,6 +9720,27 @@ function App() {
     typeof window !== "undefined" ? window.innerWidth < 980 : false,
   );
   const [clock, setClock] = useState(new Date());
+  const vpnOverlayActive = Boolean(networkStatus?.vpn_detected);
+
+  const refreshNetworkStatus = () => {
+    fetch(`${API}/api/network-status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setNetworkStatus(d);
+      })
+      .catch(() => {
+        setNetworkStatus({
+          ip: "unknown",
+          vpn_detected: false,
+          blocked: false,
+          permissible: true,
+          reason: "",
+          score: 0,
+          message: "Network check unavailable",
+        });
+      });
+  };
 
   const switchTab = (id) => {
     if (id === tab) return;
@@ -9785,32 +9806,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    const loadNetworkStatus = () => {
-      fetch(`${API}/api/network-status`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (!alive || !d) return;
-          setNetworkStatus(d);
-        })
-        .catch(() => {
-          if (!alive) return;
-          setNetworkStatus({
-            ip: "unknown",
-            vpn_detected: false,
-            blocked: false,
-            permissible: true,
-            reason: "",
-            score: 0,
-            message: "Network check unavailable",
-          });
-        });
-    };
-
-    loadNetworkStatus();
-    const id = setInterval(loadNetworkStatus, 30000);
+    refreshNetworkStatus();
+    const id = setInterval(refreshNetworkStatus, 30000);
     return () => {
-      alive = false;
       clearInterval(id);
     };
   }, []);
@@ -9855,6 +9853,7 @@ function App() {
         color: C.text,
         fontFamily: "Outfit",
         overflow: isNarrow ? "visible" : "hidden",
+        position: "relative",
       }}
     >
       <div
@@ -9864,6 +9863,10 @@ function App() {
           minHeight: "100vh",
           position: "relative",
           zIndex: 2,
+          pointerEvents: vpnOverlayActive ? "none" : "auto",
+          filter: vpnOverlayActive ? "saturate(0.72) blur(1.4px)" : "none",
+          opacity: vpnOverlayActive ? 0.38 : 1,
+          transition: "filter 260ms ease, opacity 260ms ease",
         }}
       >
         <aside
@@ -9937,6 +9940,66 @@ function App() {
             >
               <Logo size={30} animated clay />
             </div>
+            {vpnOverlayActive && (
+              <div
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 4000,
+                  display: "grid",
+                  placeItems: "center",
+                  padding: 24,
+                  background:
+                    "radial-gradient(circle at 22% 16%, rgba(255,241,205,0.42), transparent 44%), radial-gradient(circle at 78% 26%, rgba(103,191,149,0.32), transparent 42%), linear-gradient(155deg, rgba(246,233,202,0.58), rgba(205,232,214,0.54))",
+                  backdropFilter: "blur(14px) saturate(1.08)",
+                  WebkitBackdropFilter: "blur(14px) saturate(1.08)",
+                  borderTop: "1px solid rgba(196,166,102,0.44)",
+                }}
+              >
+                <div
+                  style={{
+                    width: "min(860px, 92vw)",
+                    borderRadius: 18,
+                    border: `1px solid ${C.red}`,
+                    background:
+                      "linear-gradient(145deg, rgba(255,250,232,0.9), rgba(216,239,225,0.86))",
+                    boxShadow:
+                      "0 24px 60px rgba(89,70,44,0.24), inset 0 1px 0 rgba(255,255,255,0.9)",
+                    padding: "18px 20px",
+                    display: "grid",
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ fontFamily: "Orbitron", color: C.red, letterSpacing: 1, fontSize: 15 }}>
+                    VPN DETECTED - SECURE CHANNEL MODE PAUSED
+                  </div>
+                  <div style={{ fontFamily: "JetBrains Mono", color: C.text, fontSize: 12, lineHeight: 1.55 }}>
+                    Liquid shield is active because a VPN or privacy relay was detected on this network path.
+                    Please switch off VPN/proxy and refresh to continue full scanning operations.
+                  </div>
+                  <div style={{ fontFamily: "JetBrains Mono", color: C.dim, fontSize: 11 }}>
+                    Reason: {networkStatus?.reason || networkStatus?.message || "vpn/proxy network detected"}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      onClick={refreshNetworkStatus}
+                      style={{
+                        borderRadius: 999,
+                        border: `1px solid ${C.border}`,
+                        background: "linear-gradient(145deg, rgba(247,228,182,0.88), rgba(188,230,205,0.72))",
+                        color: C.text,
+                        padding: "8px 14px",
+                        fontFamily: "JetBrains Mono",
+                        fontSize: 11,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Recheck Network
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             <div>
               <div
                 className="quanthunt-heading"
