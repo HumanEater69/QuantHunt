@@ -4557,15 +4557,33 @@ function CBOMTab({ scanModel = "general" }) {
     }
   };
 
-  const downloadBlobFile = (filename, blob) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1200);
+  const chunkDomains = (domains, chunkSize = 20) => {
+    const out = [];
+    for (let i = 0; i < domains.length; i += chunkSize) {
+      out.push(domains.slice(i, i + chunkSize));
+    }
+    return out;
+  };
+
+  const parseCsvLines = (csvText) =>
+    String(csvText || "")
+      .split(/\r?\n/)
+      .filter(Boolean);
+
+  const fetchFleetChunkCsv = async (domainsChunk, lossPct) => {
+    const resp = await fetch(`${API}/api/pqc/fleet-export.csv`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        domains: domainsChunk,
+        loss_rate: Number(lossPct) / 100,
+      }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(errText || `HTTP ${resp.status}`);
+    }
+    return parseCsvLines(await resp.text());
   };
 
   const exportFleetSimulationCsv = async () => {
@@ -4575,23 +4593,23 @@ function CBOMTab({ scanModel = "general" }) {
     setExportingFleetCsv(true);
     setExportFeedback("");
     try {
-      const resp = await fetch(`${API}/api/pqc/fleet-export.csv`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          domains,
-          loss_rate: Number(fleetLossPct) / 100,
-        }),
-      });
-      if (!resp.ok) {
-        const errText = await resp.text();
-        throw new Error(errText || `HTTP ${resp.status}`);
+      const chunks = chunkDomains(domains, 20);
+      let header = "";
+      const rows = [];
+      for (let i = 0; i < chunks.length; i += 1) {
+        const lines = await fetchFleetChunkCsv(chunks[i], fleetLossPct);
+        if (!lines.length) continue;
+        if (!header) header = lines[0];
+        rows.push(...lines.slice(1));
       }
-      const blob = await resp.blob();
+      if (!header || !rows.length) {
+        throw new Error("No CSV rows returned by export endpoint.");
+      }
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      downloadBlobFile(
+      downloadTextFile(
         `fleet-simulation-${fleetLossPct.toFixed(1)}pct-${stamp}.csv`,
-        blob,
+        `${header}\n${rows.join("\n")}`,
+        "text/csv;charset=utf-8",
       );
       setExportFeedback("Simulation CSV downloaded successfully.");
     } catch (err) {
@@ -4619,28 +4637,18 @@ function CBOMTab({ scanModel = "general" }) {
       const combinedRows = [];
       let header = "";
       for (const scenario of scenarios) {
-        const resp = await fetch(`${API}/api/pqc/fleet-export.csv`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            domains,
-            loss_rate: scenario.lossPct / 100,
-          }),
-        });
-        if (!resp.ok) {
-          const errText = await resp.text();
-          throw new Error(errText || `HTTP ${resp.status}`);
-        }
-        const csvText = await resp.text();
-        const lines = String(csvText || "")
-          .split(/\r?\n/)
-          .filter(Boolean);
-        if (!lines.length) continue;
-        if (!header) {
-          header = `scenario,loss_pct,${lines[0]}`;
-        }
-        for (const line of lines.slice(1)) {
-          combinedRows.push(`${scenario.name},${scenario.lossPct.toFixed(1)},${line}`);
+        const chunks = chunkDomains(domains, 20);
+        for (let i = 0; i < chunks.length; i += 1) {
+          const lines = await fetchFleetChunkCsv(chunks[i], scenario.lossPct);
+          if (!lines.length) continue;
+          if (!header) {
+            header = `scenario,loss_pct,${lines[0]}`;
+          }
+          for (const line of lines.slice(1)) {
+            combinedRows.push(
+              `${scenario.name},${scenario.lossPct.toFixed(1)},${line}`,
+            );
+          }
         }
         const now = new Date();
         const fileName = `fleet-simulation-${scenario.name}-${scenario.lossPct.toFixed(1)}pct.csv`;

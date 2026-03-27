@@ -1099,7 +1099,7 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
     loss_rate = max(0.0, min(0.35, float(req.loss_rate)))
     baseline_override = req.baseline_ttfb_ms
     rows: list[dict[str, object]] = []
-    max_domains = max(1, int(os.getenv("PQC_FLEET_EXPORT_MAX_DOMAINS", "60")))
+    max_domains = max(1, int(os.getenv("PQC_FLEET_EXPORT_MAX_DOMAINS", "24")))
     per_domain_timeout = max(
         1.0, float(os.getenv("PQC_FLEET_EXPORT_DOMAIN_TIMEOUT_SEC", "6"))
     )
