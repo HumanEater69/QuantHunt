@@ -199,14 +199,23 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
     if not findings:
         return False, ["No findings were produced for this scan."], 100.0
 
+    strictness_pct = max(
+        0.0,
+        min(100.0, float(os.getenv("CERT_STRICTNESS_PERCENT", "40"))),
+    )
+    strictness = strictness_pct / 100.0
+    avg_risk_threshold = 85.0 - (25.0 * strictness)
+    warning_ratio_threshold = 0.70 - (0.35 * strictness)
+    unknown_tls_ratio_threshold = 0.50 - (0.30 * strictness)
+    critical_ratio_threshold = 0.25 - (0.15 * strictness)
+
     scores = [float(f.get("hndl_risk_score", 0)) for f in findings]
     avg_risk = sum(scores) / max(len(scores), 1)
     reasons: list[str] = []
 
-    # Tightened bar: require stronger aggregate posture.
-    if avg_risk > 60:
+    if avg_risk > avg_risk_threshold:
         reasons.append(
-            f"Average HNDL risk {avg_risk:.2f} exceeds certification threshold (<= 60)."
+            f"Average HNDL risk {avg_risk:.2f} exceeds certification threshold (<= {avg_risk_threshold:.1f}) at strictness {strictness_pct:.0f}%."
         )
 
     unknown_tls_assets = []
@@ -216,7 +225,8 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
         scan_error = str(tls.get("scan_error") or "").strip()
         if tls_version in {"", "unknown", "none"} or scan_error:
             unknown_tls_assets.append(str(f.get("asset") or "unknown"))
-    if unknown_tls_assets:
+    unknown_tls_ratio = len(set(unknown_tls_assets)) / max(len(findings), 1)
+    if unknown_tls_assets and unknown_tls_ratio > unknown_tls_ratio_threshold:
         reasons.append(
             f"TLS handshake/version could not be validated for {len(unknown_tls_assets)} asset(s): "
             + ", ".join(unknown_tls_assets[:8])
@@ -237,18 +247,18 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
             critical_assets.append(str(f.get("asset") or "unknown"))
         if any(s.upper() == "WARNING" for s in statuses):
             warning_assets.append(str(f.get("asset") or "unknown"))
-    if critical_assets:
+    critical_ratio = len(set(critical_assets)) / max(len(findings), 1)
+    if critical_assets and critical_ratio > critical_ratio_threshold:
         reasons.append(
             f"Critical cryptographic posture detected on {len(critical_assets)} asset(s): "
             + ", ".join(critical_assets[:8])
             + (" ..." if len(critical_assets) > 8 else "")
         )
 
-    # Additional strictness: too many transitional warnings cannot be certified.
     warning_ratio = len(set(warning_assets)) / max(len(findings), 1)
-    if warning_ratio > 0.35:
+    if warning_ratio > warning_ratio_threshold:
         reasons.append(
-            f"Warning-level posture remains high ({warning_ratio * 100:.1f}% of assets; allowed <= 35.0%)."
+            f"Warning-level posture remains high ({warning_ratio * 100:.1f}% of assets; allowed <= {warning_ratio_threshold * 100:.1f}% at strictness {strictness_pct:.0f}%)."
         )
 
     cbom = scan.get("cbom") or {}
@@ -263,7 +273,7 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
                 or props.get("nist-fips-205-signal-detected", "false").lower() == "true"
             ):
                 pqc_signals += 1
-    if pqc_signals == 0:
+    if pqc_signals == 0 and strictness >= 0.60:
         reasons.append(
             "No NIST PQC signal (FIPS 203/204/205) detected in observed TLS/certificate metadata."
         )
@@ -961,6 +971,7 @@ async def pqc_simulate(req: PqcSimRequest) -> dict:
         "classical_tls_ms": None,
         "error": None,
     }
+    fallback_rtt = max(20.0, float(os.getenv("PQC_SIM_FALLBACK_RTT_MS", "180")))
 
     domain = _normalize_domain(req.domain or "")
     rtt = float(req.rtt_ms) if req.rtt_ms is not None else None
@@ -971,10 +982,11 @@ async def pqc_simulate(req: PqcSimRequest) -> dict:
             raise HTTPException(status_code=400, detail="Provide domain or rtt_ms")
         live = await asyncio.to_thread(_profile_domain_latency, domain)
         if live["status"] != "success":
-            raise HTTPException(
-                status_code=502, detail=f"Domain profiling failed: {live['error']}"
-            )
-        rtt = float(live["rtt_ms"])
+            rtt = fallback_rtt
+            live["status"] = "estimated"
+            live["rtt_ms"] = fallback_rtt
+        else:
+            rtt = float(live["rtt_ms"])
 
     classical = _simulate_pqc_latency(
         rtt, classical_size, loss_rate, min_rto=min_rto, mss=mss, iw=iw, crypto_ms=5.0
@@ -1128,6 +1140,7 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
         1.0, float(os.getenv("PQC_FLEET_EXPORT_DOMAIN_TIMEOUT_SEC", "6"))
     )
     concurrency = max(1, int(os.getenv("PQC_FLEET_EXPORT_CONCURRENCY", "8")))
+    fallback_rtt = max(20.0, float(os.getenv("PQC_FLEET_EXPORT_FALLBACK_RTT_MS", "180")))
 
     domains_to_process = valid_domains[:max_domains]
     skipped_domains = valid_domains[max_domains:]
@@ -1145,20 +1158,15 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
             except Exception as exc:
                 live = {"status": "failed", "error": str(exc) or "profiling failed"}
 
+            profile_error = ""
+            status = "ok"
             if live.get("status") != "success":
-                return {
-                    "domain": domain,
-                    "status": "failed",
-                    "baseline_rtt_ms": "",
-                    "baseline_ttfb_ms": "",
-                    "pqc_ttfb_ms": "",
-                    "extra_flights": "",
-                    "degradation_pct": "",
-                    "packet_loss_pct": round(loss_rate * 100, 2),
-                    "error": str(live.get("error") or "profiling failed"),
-                }
+                rtt = fallback_rtt
+                status = "estimated"
+                profile_error = str(live.get("error") or "profiling failed")
+            else:
+                rtt = float(live.get("rtt_ms") or 0)
 
-            rtt = float(live.get("rtt_ms") or 0)
             classical = _simulate_pqc_latency(rtt, 2500, loss_rate)
             hybrid = _simulate_pqc_latency(rtt, 16800, loss_rate)
             baseline_ttfb = (
@@ -1174,14 +1182,14 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
             )
             return {
                 "domain": domain,
-                "status": "ok",
+                "status": status,
                 "baseline_rtt_ms": round(rtt, 2),
                 "baseline_ttfb_ms": round(baseline_ttfb, 2),
                 "pqc_ttfb_ms": round(float(hybrid["total_latency_ms"]), 2),
                 "extra_flights": int(hybrid["extra_flights"]),
                 "degradation_pct": round(degradation_pct, 2),
                 "packet_loss_pct": round(loss_rate * 100, 2),
-                "error": "",
+                "error": profile_error,
             }
 
     rows = await asyncio.gather(*(build_row(domain) for domain in domains_to_process))

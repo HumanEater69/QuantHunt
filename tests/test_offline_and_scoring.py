@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from backend.main import (
@@ -102,8 +103,11 @@ class CertificationEligibilityTests(unittest.TestCase):
                 {
                     "asset": "example.com",
                     "hndl_risk_score": 40,
-                    "key_exchange_status": "WARNING",
-                    "auth_status": "WARNING",
+                    "key_exchange_status": "SAFE",
+                    "auth_status": "SAFE",
+                    "tls_status": "SAFE",
+                    "cert_algo_status": "SAFE",
+                    "symmetric_status": "SAFE",
                     "tls": {"tls_version": "TLSv1.3", "scan_error": ""},
                 }
             ],
@@ -119,9 +123,55 @@ class CertificationEligibilityTests(unittest.TestCase):
                 ]
             },
         }
-        ok, reasons, _ = _certificate_eligibility(scan)
+        prior = os.environ.get("CERT_STRICTNESS_PERCENT")
+        try:
+            os.environ["CERT_STRICTNESS_PERCENT"] = "100"
+            ok, reasons, _ = _certificate_eligibility(scan)
+        finally:
+            if prior is None:
+                os.environ.pop("CERT_STRICTNESS_PERCENT", None)
+            else:
+                os.environ["CERT_STRICTNESS_PERCENT"] = prior
         self.assertFalse(ok)
         self.assertTrue(any("No NIST PQC signal" in r for r in reasons))
+
+    def test_relaxed_mode_allows_missing_pqc_signal(self) -> None:
+        scan = {
+            "findings": [
+                {
+                    "asset": "example.com",
+                    "hndl_risk_score": 40,
+                    "key_exchange_status": "SAFE",
+                    "auth_status": "SAFE",
+                    "tls_status": "SAFE",
+                    "cert_algo_status": "SAFE",
+                    "symmetric_status": "SAFE",
+                    "tls": {"tls_version": "TLSv1.3", "scan_error": ""},
+                }
+            ],
+            "cbom": {
+                "components": [
+                    {
+                        "properties": [
+                            {"name": "nist-fips-203-signal-detected", "value": "false"},
+                            {"name": "nist-fips-204-signal-detected", "value": "false"},
+                            {"name": "nist-fips-205-signal-detected", "value": "false"},
+                        ]
+                    }
+                ]
+            },
+        }
+        prior = os.environ.get("CERT_STRICTNESS_PERCENT")
+        try:
+            os.environ["CERT_STRICTNESS_PERCENT"] = "40"
+            ok, reasons, _ = _certificate_eligibility(scan)
+        finally:
+            if prior is None:
+                os.environ.pop("CERT_STRICTNESS_PERCENT", None)
+            else:
+                os.environ["CERT_STRICTNESS_PERCENT"] = prior
+        self.assertTrue(ok)
+        self.assertEqual(reasons, [])
 
     def test_fails_on_unknown_tls_and_critical(self) -> None:
         scan = {
