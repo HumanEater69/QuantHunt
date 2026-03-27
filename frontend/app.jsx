@@ -2077,61 +2077,218 @@ const Btn = ({ children, onClick, disabled }) => {
   );
 };
 
-function LiquidSelect({ value, onChange, children, minWidth = 220 }) {
+function SearchGlyph({ color = "#6f7d62", size = 14 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="7" stroke={color} strokeWidth="2" />
+      <path d="M16.65 16.65L21 21" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function LiquidSearchSelect({
+  value,
+  onChange,
+  options,
+  minWidth = 260,
+  buttonLabel = "Select option",
+  searchPlaceholder = "Search...",
+  emptyLabel = "No matching options",
+}) {
   const dark = isDarkTheme();
+  const rootRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const selected = useMemo(
+    () => (options || []).find((opt) => String(opt.value) === String(value)) || null,
+    [options, value],
+  );
+
+  const filtered = useMemo(() => {
+    const q = String(query || "").trim().toLowerCase();
+    if (!q) return options || [];
+    return (options || []).filter((opt) =>
+      String(opt.label || "").toLowerCase().includes(q),
+    );
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [open]);
+
   return (
     <div
+      ref={rootRef}
       style={{
         position: "relative",
         minWidth,
-        borderRadius: 12,
-        border: dark
-          ? "1px solid rgba(154,176,205,0.44)"
-          : "1px solid rgba(113,141,177,0.34)",
-        background: dark
-          ? "linear-gradient(155deg, rgba(36,55,83,0.8), rgba(20,34,53,0.68))"
-          : "linear-gradient(155deg, rgba(246,250,255,0.92), rgba(226,237,249,0.78))",
-        boxShadow: dark
-          ? "0 10px 18px rgba(6,10,16,0.34), inset 0 1px 0 rgba(201,219,243,0.14)"
-          : "0 8px 14px rgba(166,184,209,0.28), inset 0 1px 0 rgba(255,255,255,0.88)",
-        backdropFilter: "blur(10px) saturate(118%)",
-        WebkitBackdropFilter: "blur(10px) saturate(118%)",
       }}
     >
-      <select
-        value={value}
-        onChange={onChange}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
         style={{
           width: "100%",
-          border: "none",
-          outline: "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
           borderRadius: 12,
-          background: "transparent",
+          border: dark
+            ? "1px solid rgba(121,189,159,0.44)"
+            : "1px solid rgba(146,129,80,0.36)",
+          background: dark
+            ? "linear-gradient(152deg, rgba(18,53,42,0.84), rgba(16,42,34,0.72))"
+            : "linear-gradient(152deg, rgba(255,244,211,0.86), rgba(206,238,220,0.7))",
+          boxShadow: dark
+            ? "0 10px 18px rgba(4,12,10,0.42), inset 0 1px 0 rgba(160,222,193,0.14)"
+            : "0 9px 16px rgba(166,152,109,0.26), inset 0 1px 0 rgba(255,255,255,0.8)",
           color: C.text,
-          padding: "8px 30px 8px 10px",
+          padding: "9px 10px",
+          cursor: "pointer",
           fontFamily: "JetBrains Mono",
           fontSize: 11,
-          letterSpacing: 0.3,
-          appearance: "none",
-          cursor: "pointer",
+          letterSpacing: 0.25,
+          textAlign: "left",
         }}
       >
-        {children}
-      </select>
-      <span
-        style={{
-          position: "absolute",
-          right: 10,
-          top: "50%",
-          transform: "translateY(-50%)",
-          color: C.dim,
-          pointerEvents: "none",
-          fontSize: 10,
-          fontFamily: "JetBrains Mono",
-        }}
-      >
-        ?
-      </span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {selected?.label || buttonLabel}
+        </span>
+        <span style={{ color: C.dim, fontSize: 10 }}>{open ? "^" : "v"}</span>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: 0,
+            right: 0,
+            zIndex: 40,
+            borderRadius: 12,
+            border: dark
+              ? "1px solid rgba(121,189,159,0.42)"
+              : "1px solid rgba(146,129,80,0.34)",
+            background: dark
+              ? "linear-gradient(160deg, rgba(16,44,35,0.96), rgba(12,33,27,0.94))"
+              : "linear-gradient(160deg, rgba(255,247,223,0.96), rgba(221,244,230,0.94))",
+            boxShadow: dark
+              ? "0 20px 30px rgba(2,10,8,0.58)"
+              : "0 18px 28px rgba(134,117,66,0.22)",
+            backdropFilter: "blur(12px) saturate(120%)",
+            WebkitBackdropFilter: "blur(12px) saturate(120%)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: 8,
+              borderBottom: dark
+                ? "1px solid rgba(121,189,159,0.2)"
+                : "1px solid rgba(146,129,80,0.2)",
+            }}
+          >
+            <SearchGlyph color={dark ? "#93c9ab" : "#7a6b3c"} />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              autoFocus
+              style={{
+                flex: 1,
+                border: "none",
+                outline: "none",
+                borderRadius: 8,
+                background: dark ? "rgba(17,57,44,0.62)" : "rgba(255,252,236,0.8)",
+                color: C.text,
+                padding: "7px 8px",
+                fontFamily: "JetBrains Mono",
+                fontSize: 11,
+              }}
+            />
+          </div>
+          <div
+            className="qh-soft-scroll"
+            style={{ maxHeight: 220, overflowY: "auto", padding: 6, display: "grid", gap: 6 }}
+          >
+            {filtered.length ? (
+              filtered.map((opt) => {
+                const active = String(opt.value) === String(value);
+                return (
+                  <button
+                    type="button"
+                    key={String(opt.value)}
+                    onClick={() => {
+                      onChange(String(opt.value));
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                    style={{
+                      textAlign: "left",
+                      borderRadius: 10,
+                      border: active
+                        ? dark
+                          ? "1px solid rgba(127,206,170,0.68)"
+                          : "1px solid rgba(152,122,49,0.64)"
+                        : dark
+                          ? "1px solid rgba(126,166,145,0.36)"
+                          : "1px solid rgba(167,147,92,0.36)",
+                      background: active
+                        ? dark
+                          ? "linear-gradient(140deg, rgba(33,88,69,0.7), rgba(18,65,48,0.58))"
+                          : "linear-gradient(140deg, rgba(255,233,171,0.8), rgba(183,230,206,0.62))"
+                        : dark
+                          ? "rgba(16,44,35,0.52)"
+                          : "rgba(255,250,234,0.62)",
+                      color: C.text,
+                      padding: "8px 10px",
+                      fontFamily: "JetBrains Mono",
+                      fontSize: 12,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })
+            ) : (
+              <div
+                style={{
+                  borderRadius: 10,
+                  border: dark
+                    ? "1px dashed rgba(126,166,145,0.42)"
+                    : "1px dashed rgba(167,147,92,0.42)",
+                  color: C.dim,
+                  padding: "10px",
+                  fontFamily: "JetBrains Mono",
+                  fontSize: 11,
+                }}
+              >
+                {emptyLabel}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3913,6 +4070,14 @@ function AssetMapTab({ scanModel = "general" }) {
     if (signals?.sstp) tags.push("SSTP");
     return tags;
   };
+  const domainOptions = useMemo(
+    () =>
+      (scans || []).map((s) => ({
+        value: s.scan_id,
+        label: s.domain,
+      })),
+    [scans],
+  );
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Card style={{ padding: 18 }}>
@@ -3926,28 +4091,18 @@ function AssetMapTab({ scanModel = "general" }) {
             "VPN signal hints",
           ]}
         />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {scans.map((s) => (
-            <button
-              key={s.scan_id}
-              onClick={() => load(s)}
-              style={{
-                borderRadius: 10,
-                padding: "8px 12px",
-                border: `1px solid ${selected === s.scan_id ? C.cyan : C.border}`,
-                background:
-                  selected === s.scan_id
-                    ? "rgba(141,181,220,0.15)"
-                    : "transparent",
-                color: selected === s.scan_id ? C.cyan : C.dim,
-                cursor: "pointer",
-                fontFamily: "JetBrains Mono",
-              }}
-            >
-              {s.domain}
-            </button>
-          ))}
-        </div>
+        <LiquidSearchSelect
+          value={selected || ""}
+          onChange={(scanId) => {
+            const picked = scans.find((s) => String(s.scan_id) === String(scanId));
+            if (picked) load(picked);
+          }}
+          options={domainOptions}
+          buttonLabel="Select bank/domain"
+          searchPlaceholder="Search domain..."
+          emptyLabel="No scanned domains match your search"
+          minWidth={420}
+        />
         <div
           style={{
             marginTop: 8,
@@ -3956,7 +4111,7 @@ function AssetMapTab({ scanModel = "general" }) {
             fontSize: 10,
           }}
         >
-          Click the bank/domain chip you want to view.
+          Pick a domain from the searchable liquid selector.
         </div>
       </Card>
       <div
@@ -4035,6 +4190,7 @@ function CryptoTab({ scanModel = "general" }) {
   const [scans, setScans] = useState([]);
   const [findings, setFindings] = useState([]);
   const [radar, setRadar] = useState([]);
+  const [selectedScanId, setSelectedScanId] = useState("");
   useEffect(() => {
     fetch(`${API}/api/scans?${scanModelParam(scanModel)}`)
       .then((r) => r.json())
@@ -4043,6 +4199,7 @@ function CryptoTab({ scanModel = "general" }) {
       );
   }, [scanModel]);
   const load = async (scanId) => {
+    setSelectedScanId(scanId);
     const r = await fetch(`${API}/api/scan/${scanId}/findings`);
     const d = await r.json();
     const list = d.findings || [];
@@ -4088,6 +4245,14 @@ function CryptoTab({ scanModel = "general" }) {
       { axis: "Hash", value: 35 },
     ]);
   };
+  const domainOptions = useMemo(
+    () =>
+      (scans || []).map((s) => ({
+        value: s.scan_id,
+        label: s.domain,
+      })),
+    [scans],
+  );
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Card style={{ padding: 18 }}>
@@ -4104,25 +4269,15 @@ function CryptoTab({ scanModel = "general" }) {
             "Status badges for weak/strong controls",
           ]}
         />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {scans.map((s) => (
-            <button
-              key={s.scan_id}
-              onClick={() => load(s.scan_id)}
-              style={{
-                borderRadius: 10,
-                padding: "8px 12px",
-                border: `1px solid ${C.border}`,
-                background: "transparent",
-                color: C.dim,
-                cursor: "pointer",
-                fontFamily: "JetBrains Mono",
-              }}
-            >
-              {s.domain}
-            </button>
-          ))}
-        </div>
+        <LiquidSearchSelect
+          value={selectedScanId}
+          onChange={(scanId) => load(scanId)}
+          options={domainOptions}
+          buttonLabel="Select bank/domain"
+          searchPlaceholder="Search domain..."
+          emptyLabel="No scanned domains match your search"
+          minWidth={420}
+        />
         <div
           style={{
             marginTop: 8,
@@ -4131,7 +4286,7 @@ function CryptoTab({ scanModel = "general" }) {
             fontSize: 10,
           }}
         >
-          Click the bank/domain chip you want to view.
+          Pick a domain from the searchable liquid selector.
         </div>
       </Card>
       {radar.length > 0 && (
@@ -4825,7 +4980,7 @@ function CBOMTab({ scanModel = "general" }) {
             fontSize: 10,
           }}
         >
-          Click the bank/domain chip you want to view.
+          Use the searchable selector above to choose a bank/domain.
         </div>
       </Card>
       <Card style={{ padding: 16 }}>
@@ -5034,18 +5189,18 @@ function RoadmapTab({ scanModel = "general" }) {
               alignItems: "center",
             }}
           >
-            <LiquidSelect
+            <LiquidSearchSelect
               value={selectedScanId}
-              onChange={(e) => setSelectedScanId(e.target.value)}
-              minWidth={220}
-            >
-              <option value="">Select completed scan</option>
-              {scans.map((s) => (
-                <option key={s.scan_id} value={s.scan_id}>
-                  {s.domain}
-                </option>
-              ))}
-            </LiquidSelect>
+              onChange={setSelectedScanId}
+              options={(scans || []).map((s) => ({
+                value: s.scan_id,
+                label: s.domain,
+              }))}
+              buttonLabel="Select completed scan"
+              searchPlaceholder="Search scan domain..."
+              emptyLabel="No completed scans match"
+              minWidth={280}
+            />
             <Btn onClick={loadScans}>REFRESH</Btn>
           </div>
         </div>
@@ -5467,14 +5622,18 @@ function LeaderboardTab({ scanModel = "general" }) {
           >
             Leaderboard order
           </div>
-          <LiquidSelect
+          <LiquidSearchSelect
             value={safestFirst ? "safest" : "risky"}
-            onChange={(e) => setSafestFirst(e.target.value === "safest")}
-            minWidth={168}
-          >
-            <option value="safest">SAFEST FIRST</option>
-            <option value="risky">HIGHEST RISK FIRST</option>
-          </LiquidSelect>
+            onChange={(v) => setSafestFirst(v === "safest")}
+            options={[
+              { value: "safest", label: "SAFEST FIRST" },
+              { value: "risky", label: "HIGHEST RISK FIRST" },
+            ]}
+            buttonLabel="Leaderboard order"
+            searchPlaceholder="Search order..."
+            emptyLabel="No order option"
+            minWidth={220}
+          />
         </div>
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div
@@ -6042,17 +6201,18 @@ function LeaderboardTab({ scanModel = "general" }) {
             >
               Select bank/domain
             </div>
-            <LiquidSelect
+            <LiquidSearchSelect
               value={insightDomain}
-              onChange={(e) => setInsightDomain(e.target.value)}
-              minWidth={220}
-            >
-              {perBankInsights.map((item) => (
-                <option key={`sel-${item.domain}`} value={item.domain}>
-                  {item.domain}
-                </option>
-              ))}
-            </LiquidSelect>
+              onChange={setInsightDomain}
+              options={(perBankInsights || []).map((item) => ({
+                value: item.domain,
+                label: item.domain,
+              }))}
+              buttonLabel="Select bank/domain"
+              searchPlaceholder="Search bank/domain..."
+              emptyLabel="No domains available"
+              minWidth={280}
+            />
           </div>
         </div>
 
@@ -6313,17 +6473,18 @@ function BankSignalLabTab({ scanModel = "general" }) {
             >
               Select domain
             </span>
-            <LiquidSelect
+            <LiquidSearchSelect
               value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-              minWidth={220}
-            >
-              {available.map((r) => (
-                <option key={r.domain} value={r.domain}>
-                  {r.domain}
-                </option>
-              ))}
-            </LiquidSelect>
+              onChange={setSelected}
+              options={(available || []).map((r) => ({
+                value: r.domain,
+                label: r.domain,
+              }))}
+              buttonLabel="Select domain"
+              searchPlaceholder="Search domain..."
+              emptyLabel="No domains available"
+              minWidth={280}
+            />
           </div>
         </div>
         {!available.length && (
