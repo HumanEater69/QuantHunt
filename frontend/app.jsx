@@ -4929,18 +4929,19 @@ function CBOMTab({ scanModel = "general" }) {
         : avgHndlRisk > 60
           ? "Average HNDL risk is above executive acceptance threshold."
           : "PQC signals are limited in observable metadata.";
+  const darkTheme = isDarkTheme();
   const transparencyPanelBg =
-    theme === "dark"
+    darkTheme
       ? "linear-gradient(140deg, rgba(63,86,101,0.58), rgba(48,72,94,0.5))"
       : "linear-gradient(140deg, rgba(255,245,219,0.62), rgba(218,240,228,0.46))";
   const transparencyTextColor =
-    theme === "dark" ? "rgba(230,239,246,0.92)" : C.dim;
+    darkTheme ? "rgba(230,239,246,0.92)" : C.dim;
   const transparencySubtleColor =
-    theme === "dark" ? "rgba(210,224,236,0.86)" : C.dim;
+    darkTheme ? "rgba(210,224,236,0.86)" : C.dim;
   const transparencyAccentColor =
-    theme === "dark" ? "#8dd4ff" : C.blue;
+    darkTheme ? "#8dd4ff" : C.blue;
   const simulationPanelBg =
-    theme === "dark"
+    darkTheme
       ? "linear-gradient(135deg, rgba(74,102,118,0.56), rgba(56,86,110,0.52))"
       : "linear-gradient(135deg, rgba(255,248,222,0.56), rgba(180,231,205,0.33))";
   return (
@@ -5194,11 +5195,11 @@ function CBOMTab({ scanModel = "general" }) {
               style={{
                 border: "1px solid rgba(30,128,93,0.35)",
                 background:
-                  theme === "dark"
+                  darkTheme
                     ? "rgba(46,101,83,0.4)"
                     : "rgba(242,255,245,0.62)",
                 borderRadius: 10,
-                color: theme === "dark" ? "#cbffde" : "#1f6a4d",
+                color: darkTheme ? "#cbffde" : "#1f6a4d",
                 fontFamily: "JetBrains Mono",
                 fontSize: 11,
                 padding: "8px 10px",
