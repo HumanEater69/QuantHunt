@@ -4543,6 +4543,7 @@ function CBOMTab({ scanModel = "general" }) {
   const [scenarioExportLog, setScenarioExportLog] = useState([]);
   const [scanPickerQuery, setScanPickerQuery] = useState("");
   const [scanPickerIndex, setScanPickerIndex] = useState(-1);
+  const [scanPickerOpen, setScanPickerOpen] = useState(false);
   const [exportFeedback, setExportFeedback] = useState("");
 
   useEffect(() => {
@@ -4829,6 +4830,7 @@ function CBOMTab({ scanModel = "general" }) {
   const load = async (id, domain) => {
     setSelectedScanId(id);
     setSelectedDomain(domain || "");
+    setScanPickerOpen(false);
     const r = await fetch(`${API}/api/scan/${id}/cbom`);
     if (!r.ok) return setCbom(null);
     setCbom(await r.json());
@@ -5017,7 +5019,11 @@ function CBOMTab({ scanModel = "general" }) {
           <br />- Agent required on bank systems: No
           <br />- Safety note: No exploit payloads, no auth bypass attempts, no endpoint installation
         </div>
-        <details className="cbom-picker-shell" open>
+        <details
+          className="cbom-picker-shell"
+          open={scanPickerOpen}
+          onToggle={(e) => setScanPickerOpen(e.currentTarget.open)}
+        >
           <summary className="cbom-picker-summary">
             Select scanned bank/domain ({scans.length})
           </summary>

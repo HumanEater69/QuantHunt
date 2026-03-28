@@ -132,12 +132,12 @@ code {
 }
 
 .cbom-picker-shell {
-  border: 1px solid rgba(160, 146, 97, 0.42);
+  border: 1px solid rgba(154, 142, 100, 0.38);
   border-radius: 14px;
-  background: linear-gradient(140deg, rgba(255, 248, 224, 0.58), rgba(212, 244, 223, 0.3));
+  background: linear-gradient(140deg, rgba(252, 247, 232, 0.6), rgba(218, 241, 229, 0.34));
   backdrop-filter: blur(10px) saturate(1.14);
   -webkit-backdrop-filter: blur(10px) saturate(1.14);
-  box-shadow: 0 10px 22px rgba(110, 137, 87, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  box-shadow: 0 8px 18px rgba(110, 137, 87, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
 
 .cbom-picker-summary {
@@ -166,8 +166,8 @@ code {
 
 .cbom-picker-body {
   display: grid;
-  gap: 10px;
-  padding: 0 12px 12px;
+  gap: 8px;
+  padding: 0 12px 10px;
 }
 
 .cbom-picker-search {
@@ -186,10 +186,10 @@ code {
 }
 
 .cbom-picker-results {
-  max-height: 220px;
+  max-height: 208px;
   overflow: auto;
   display: grid;
-  gap: 8px;
+  gap: 7px;
   padding-right: 2px;
 }
 
@@ -200,8 +200,14 @@ code {
   color: #375341;
   font-family: "JetBrains Mono", monospace;
   font-size: 13px;
-  padding: 8px 10px;
+  padding: 9px 11px;
   cursor: pointer;
+  transition: border-color 140ms ease, transform 120ms ease, box-shadow 180ms ease;
+}
+
+.cbom-picker-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(124, 142, 112, 0.12);
 }
 
 .cbom-picker-empty {
@@ -215,6 +221,8 @@ code {
 }
 
 .cbom-picker-selected {
+  border-top: 1px dashed rgba(147, 133, 92, 0.34);
+  padding-top: 8px;
   color: #4e654f;
   font-family: "JetBrains Mono", monospace;
   font-size: 11px;
