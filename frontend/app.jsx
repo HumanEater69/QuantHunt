@@ -3258,6 +3258,7 @@ function ScannerTab({
   };
 
   const currentMode = normalizeScanModel(scanModel);
+  const darkTheme = isDarkTheme();
   const inModeFleetScans = fleetScans.filter(
     (item) => normalizeScanModel(item.scan_model || scanModel) === currentMode,
   );
@@ -3302,17 +3303,17 @@ function ScannerTab({
         {(() => {
           const boardroomFailed = boardroomView.ready === false;
           const panelBg =
-            theme === "dark"
+            darkTheme
               ? boardroomFailed
                 ? "linear-gradient(145deg, rgba(96,34,38,0.9), rgba(67,24,30,0.84))"
                 : "linear-gradient(145deg, rgba(54,70,56,0.9), rgba(39,52,44,0.84))"
               : boardroomFailed
                 ? "linear-gradient(145deg, rgba(250,225,224,0.9), rgba(239,206,206,0.74))"
                 : "linear-gradient(145deg, rgba(255,248,225,0.92), rgba(214,241,226,0.78))";
-          const bodyColor = theme === "dark" ? "#f3eedc" : C.text;
+          const bodyColor = darkTheme ? "#f3eedc" : C.text;
           const titleColor = boardroomFailed
             ? C.red
-            : theme === "dark"
+            : darkTheme
               ? "#9be6bd"
               : C.green;
 
