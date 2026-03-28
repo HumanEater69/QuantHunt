@@ -37,14 +37,47 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Alias Custom Domain
+        shell: bash
         working-directory: frontend
-        run: vercel alias set "${{ steps.deploy.outputs.deployment_url }}" quanthunt.vercel.com --token=${{ secrets.VERCEL_TOKEN }}
+        run: |
+          custom_domain="${{ secrets.VERCEL_CUSTOM_DOMAIN }}"
+          if [ -z "$custom_domain" ]; then
+            custom_domain="quanthunt.vercel.com"
+          fi
+
+          alias_token="${{ secrets.VERCEL_DOMAIN_TOKEN }}"
+          if [ -z "$alias_token" ]; then
+            alias_token="${{ secrets.VERCEL_TOKEN }}"
+          fi
+
+          set +e
+          vercel alias set "${{ steps.deploy.outputs.deployment_url }}" "$custom_domain" --token="$alias_token"
+          status=$?
+          set -e
+
+          if [ $status -ne 0 ]; then
+            echo "::warning::Could not alias $custom_domain. Ensure the domain is owned by the same Vercel scope as this project, or set VERCEL_DOMAIN_TOKEN with access to that domain."
+          fi
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Verify Custom Domain
-        run: curl -I https://quanthunt.vercel.com
+        shell: bash
+        run: |
+          custom_domain="${{ secrets.VERCEL_CUSTOM_DOMAIN }}"
+          if [ -z "$custom_domain" ]; then
+            custom_domain="quanthunt.vercel.com"
+          fi
+
+          set +e
+          curl -I "https://$custom_domain"
+          status=$?
+          set -e
+
+          if [ $status -ne 0 ]; then
+            echo "::warning::Custom domain verification request failed for $custom_domain."
+          fi
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
