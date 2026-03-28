@@ -563,35 +563,48 @@ function ParticleField() {
   useEffect(() => {
     const c = ref.current;
     const x = c.getContext("2d");
-    const frameBudgetMs = 33;
+    const coarsePointer =
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(pointer: coarse)").matches;
+    const frameBudgetMs = coarsePointer ? 50 : 33;
     let last = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, coarsePointer ? 1.2 : 1.5);
     const setSize = () => {
-      c.width = innerWidth;
-      c.height = innerHeight;
+      c.width = Math.floor(innerWidth * dpr);
+      c.height = Math.floor(innerHeight * dpr);
+      c.style.width = `${innerWidth}px`;
+      c.style.height = `${innerHeight}px`;
+      x.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     setSize();
-    const pts = Array.from({ length: 56 }, () => ({
-      x: Math.random() * c.width,
-      y: Math.random() * c.height,
+    const pointCount = coarsePointer ? 34 : 56;
+    const pts = Array.from({ length: pointCount }, () => ({
+      x: Math.random() * innerWidth,
+      y: Math.random() * innerHeight,
       vx: (Math.random() - 0.5) * 0.35,
       vy: (Math.random() - 0.5) * 0.35,
       r: Math.random() * 1.4 + 0.2,
     }));
     let id;
     const draw = (now = 0) => {
+      if (document.hidden) {
+        id = requestAnimationFrame(draw);
+        return;
+      }
       if (now - last < frameBudgetMs) {
         id = requestAnimationFrame(draw);
         return;
       }
       last = now;
-      x.clearRect(0, 0, c.width, c.height);
+      x.clearRect(0, 0, innerWidth, innerHeight);
       for (const p of pts) {
         p.x += p.vx;
         p.y += p.vy;
-        if (p.x < 0) p.x = c.width;
-        if (p.x > c.width) p.x = 0;
-        if (p.y < 0) p.y = c.height;
-        if (p.y > c.height) p.y = 0;
+        if (p.x < 0) p.x = innerWidth;
+        if (p.x > innerWidth) p.x = 0;
+        if (p.y < 0) p.y = innerHeight;
+        if (p.y > innerHeight) p.y = 0;
         x.beginPath();
         x.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         x.fillStyle = "rgba(132,170,208,0.6)";
@@ -802,13 +815,21 @@ function MatrixRain({ opacity = 0.42, zIndex = 0 }) {
     const canvas = ref.current;
     const ctx = canvas.getContext("2d");
     const chars = "01ABCDEFHJKMNPQRTUVWXYZ";
+    const coarsePointer =
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(pointer: coarse)").matches;
+    const dpr = Math.min(window.devicePixelRatio || 1, coarsePointer ? 1.1 : 1.4);
     let cols = 0;
     let drops = [];
 
     const resize = () => {
-      canvas.width = innerWidth;
-      canvas.height = innerHeight;
-      cols = Math.floor(canvas.width / 14);
+      canvas.width = Math.floor(innerWidth * dpr);
+      canvas.height = Math.floor(innerHeight * dpr);
+      canvas.style.width = `${innerWidth}px`;
+      canvas.style.height = `${innerHeight}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cols = Math.floor(innerWidth / 14);
       drops = Array.from({ length: cols }, () =>
         Math.floor(Math.random() * 20),
       );
@@ -816,16 +837,20 @@ function MatrixRain({ opacity = 0.42, zIndex = 0 }) {
     resize();
 
     let frame;
-    const frameBudgetMs = 42;
+    const frameBudgetMs = coarsePointer ? 62 : 42;
     let last = 0;
     const draw = (now = 0) => {
+      if (document.hidden) {
+        frame = requestAnimationFrame(draw);
+        return;
+      }
       if (now - last < frameBudgetMs) {
         frame = requestAnimationFrame(draw);
         return;
       }
       last = now;
-      ctx.fillStyle = "rgba(2, 8, 14, 0.16)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = coarsePointer ? "rgba(2, 8, 14, 0.22)" : "rgba(2, 8, 14, 0.16)";
+      ctx.fillRect(0, 0, innerWidth, innerHeight);
       ctx.font = "12px JetBrains Mono, monospace";
       for (let i = 0; i < cols; i += 1) {
         const txt = chars[Math.floor(Math.random() * chars.length)];
@@ -9794,6 +9819,10 @@ function App() {
     typeof window !== "undefined" ? window.innerWidth < 980 : false,
   );
   const [clock, setClock] = useState(new Date());
+  const isTouchDevice =
+    typeof window !== "undefined" &&
+    window.matchMedia &&
+    window.matchMedia("(pointer: coarse)").matches;
   const vpnOverlayActive = Boolean(networkStatus?.blocked);
 
   const refreshNetworkStatus = () => {
@@ -9966,8 +9995,12 @@ function App() {
                 ? "linear-gradient(165deg, rgba(35,60,46,0.9), rgba(28,49,38,0.86) 52%, rgba(22,39,30,0.84) 100%)"
                 : "linear-gradient(165deg, rgba(245,235,214,0.93), rgba(236,223,195,0.89) 52%, rgba(228,209,171,0.85) 100%)",
             backgroundSize: "100% 100%",
-            backdropFilter: "blur(20px) saturate(1.08) contrast(1.01)",
-            WebkitBackdropFilter: "blur(20px) saturate(1.08) contrast(1.01)",
+            backdropFilter: isNarrow || isTouchDevice
+              ? "blur(12px) saturate(1.04)"
+              : "blur(20px) saturate(1.08) contrast(1.01)",
+            WebkitBackdropFilter: isNarrow || isTouchDevice
+              ? "blur(12px) saturate(1.04)"
+              : "blur(20px) saturate(1.08) contrast(1.01)",
             boxShadow:
               theme === "dark"
                 ? "26px 0 44px rgba(5,10,8,0.58), inset 0 2px 0 rgba(215,199,153,0.18), inset -2px 0 0 rgba(121,138,112,0.26), inset 10px 0 22px rgba(7,12,9,0.44), inset 0 -8px 18px rgba(4,8,6,0.3)"
@@ -10554,10 +10587,17 @@ function App() {
             height: isNarrow ? "auto" : "calc(100vh - 24px)",
             overflowY: isNarrow ? "visible" : "auto",
             overflowX: "hidden",
-            scrollBehavior: "smooth",
+            scrollBehavior: "auto",
+            WebkitOverflowScrolling: "touch",
+            overscrollBehaviorY: "contain",
+            touchAction: "pan-y",
             paddingRight: isNarrow ? 0 : 8,
-            backdropFilter: "blur(16px) saturate(1.2)",
-            WebkitBackdropFilter: "blur(16px) saturate(1.2)",
+            backdropFilter: isNarrow || isTouchDevice
+              ? "blur(10px) saturate(1.08)"
+              : "blur(16px) saturate(1.2)",
+            WebkitBackdropFilter: isNarrow || isTouchDevice
+              ? "blur(10px) saturate(1.08)"
+              : "blur(16px) saturate(1.2)",
           }}
         >
           <div
@@ -10703,7 +10743,7 @@ function App() {
               </TabContentErrorBoundary>
             </div>
           </div>
-          <style>{`@keyframes tabGlassShift{0%{opacity:.84;transform:scale(1.03)}100%{opacity:0;transform:scale(1)}}@keyframes mainPanelIn{0%{opacity:.22;transform:translateY(14px)}100%{opacity:1;transform:translateY(0)}}@keyframes modeLiquidMorph{0%{opacity:0;transform:translateX(-50%) translateY(-10px) scale(.96);filter:blur(3px)}12%{opacity:1;transform:translateX(-50%) translateY(0) scale(1.02);filter:blur(0)}82%{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}100%{opacity:0;transform:translateX(-50%) translateY(8px) scale(.99)}}@keyframes modeFlashPulse{0%,100%{opacity:.42;transform:translateY(0)}50%{opacity:1;transform:translateY(-1px)}}@keyframes liquidTapPulse{0%{transform:scale(1);filter:saturate(1)}45%{transform:scale(.986);filter:saturate(1.18)}100%{transform:scale(1);filter:saturate(1)}}.liquid-tap{transition:transform 180ms ease,filter 180ms ease,box-shadow 220ms ease}.liquid-tap:hover{filter:saturate(1.08)}.liquid-tap:active{animation:liquidTapPulse 360ms ease}.qh-main-scroll{scrollbar-width:thin;scrollbar-color:rgba(140,162,190,0.6) transparent}.qh-main-scroll::-webkit-scrollbar{width:10px}.qh-main-scroll::-webkit-scrollbar-track{background:transparent}.qh-main-scroll::-webkit-scrollbar-thumb{border-radius:999px;background:linear-gradient(180deg,rgba(156,176,205,0.75),rgba(132,154,184,0.55));border:2px solid transparent;background-clip:padding-box}`}</style>
+          <style>{`@keyframes tabGlassShift{0%{opacity:.84;transform:scale(1.03)}100%{opacity:0;transform:scale(1)}}@keyframes mainPanelIn{0%{opacity:.22;transform:translateY(14px)}100%{opacity:1;transform:translateY(0)}}@keyframes modeLiquidMorph{0%{opacity:0;transform:translateX(-50%) translateY(-10px) scale(.96);filter:blur(3px)}12%{opacity:1;transform:translateX(-50%) translateY(0) scale(1.02);filter:blur(0)}82%{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}100%{opacity:0;transform:translateX(-50%) translateY(8px) scale(.99)}}@keyframes modeFlashPulse{0%,100%{opacity:.42;transform:translateY(0)}50%{opacity:1;transform:translateY(-1px)}}@keyframes liquidTapPulse{0%{transform:scale(1);filter:saturate(1)}45%{transform:scale(.986);filter:saturate(1.18)}100%{transform:scale(1);filter:saturate(1)}}.liquid-tap{transition:transform 180ms ease,filter 180ms ease,box-shadow 220ms ease}.liquid-tap:hover{filter:saturate(1.08)}.liquid-tap:active{animation:liquidTapPulse 360ms ease}.qh-main-scroll{scrollbar-width:thin;scrollbar-color:rgba(140,162,190,0.6) transparent;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;contain:layout paint}.qh-main-scroll::-webkit-scrollbar{width:10px}.qh-main-scroll::-webkit-scrollbar-track{background:transparent}.qh-main-scroll::-webkit-scrollbar-thumb{border-radius:999px;background:linear-gradient(180deg,rgba(156,176,205,0.75),rgba(132,154,184,0.55));border:2px solid transparent;background-clip:padding-box}`}</style>
         </main>
       </div>
       <QuantHuntFloating theme={theme} scanModel={scanModel} />
