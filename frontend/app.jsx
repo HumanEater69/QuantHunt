@@ -3299,16 +3299,31 @@ function ScannerTab({
         <h3 style={{ fontFamily: "Orbitron", color: C.cyan, marginTop: 0 }}>
           <PressureText glow={C.cyan}>DOMAIN RADAR</PressureText>
         </h3>
+        {(() => {
+          const boardroomFailed = boardroomView.ready === false;
+          const panelBg =
+            theme === "dark"
+              ? boardroomFailed
+                ? "linear-gradient(145deg, rgba(96,34,38,0.9), rgba(67,24,30,0.84))"
+                : "linear-gradient(145deg, rgba(54,70,56,0.9), rgba(39,52,44,0.84))"
+              : boardroomFailed
+                ? "linear-gradient(145deg, rgba(250,225,224,0.9), rgba(239,206,206,0.74))"
+                : "linear-gradient(145deg, rgba(255,248,225,0.92), rgba(214,241,226,0.78))";
+          const bodyColor = theme === "dark" ? "#f3eedc" : C.text;
+          const titleColor = boardroomFailed
+            ? C.red
+            : theme === "dark"
+              ? "#9be6bd"
+              : C.green;
+
+          return (
         <div
           style={{
             marginBottom: 12,
-            border: `1px solid ${boardroomView.ready === false ? C.red : C.border}`,
+            border: `1px solid ${boardroomFailed ? C.red : C.border}`,
             borderRadius: 14,
             padding: 12,
-            background:
-              boardroomView.ready === false
-                ? "linear-gradient(145deg, rgba(250,225,224,0.9), rgba(239,206,206,0.74))"
-                : "linear-gradient(145deg, rgba(255,248,225,0.92), rgba(214,241,226,0.78))",
+            background: panelBg,
             boxShadow:
               "inset 0 1px 0 rgba(255,255,255,0.9), 0 14px 30px rgba(111,102,76,0.14)",
             fontFamily: "JetBrains Mono",
@@ -3319,17 +3334,19 @@ function ScannerTab({
           <div
             style={{
               fontFamily: "Orbitron",
-              color: boardroomView.ready === false ? C.red : C.green,
+              color: titleColor,
               fontSize: 12,
               marginBottom: 6,
             }}
           >
             BOARDROOM VIEW
           </div>
-          <div style={{ color: C.text }}>
+          <div style={{ color: bodyColor }}>
             Is this bank PQC-ready today: {boardroomView.ready === null ? "PENDING" : boardroomView.ready ? "YES (GREEN)" : "NO (RED)"} | Why: {boardroomView.why} | Top 3 actions: {(boardroomView.actions || []).length ? boardroomView.actions.map((x, i) => `${i + 1}) ${x}`).join(" ; ") : "1) Complete scan 2) Review findings 3) Apply remediation roadmap"}
           </div>
         </div>
+          );
+        })()}
         {flashMessage && (
           <div
             style={{
