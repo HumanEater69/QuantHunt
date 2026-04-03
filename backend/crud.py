@@ -1,4 +1,7 @@
+
+
 from __future__ import annotations
+from backend.pqc_utils import is_hybrid_pqc_crypto
 
 from datetime import datetime, timezone
 import hashlib
@@ -325,6 +328,8 @@ def scan_detail_payload(session: Session, scan_id: str) -> dict | None:
             "jwt_alg": (api_meta.get("jwt_algorithms") or [None])[0],
             "vpn_exposed": bool(meta.get("vpn_exposed")),
         }
+        # Hybrid PQC detection for asset
+        is_hybrid = is_hybrid_pqc_crypto(tls_meta)
         assets_payload.append(
             {
                 "id": a.id,
@@ -334,8 +339,9 @@ def scan_detail_payload(session: Session, scan_id: str) -> dict | None:
                 "tls_version": a.tls_version,
                 "cipher_suite": a.cipher_suite,
                 "risk_score": a.risk_score,
-                "label": _badge_status_from_score(a.risk_score),
+                "label": a.label or _badge_status_from_score(a.risk_score),
                 "metadata_json": json.dumps(flat_meta),
+                "hybrid_pqc": is_hybrid,
                 "vpn_signals": {
                     "udp_500": bool(vpn_meta.get("udp_500")),
                     "udp_4500": bool(vpn_meta.get("udp_4500")),

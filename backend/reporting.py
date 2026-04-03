@@ -40,7 +40,22 @@ def _is_hybrid_pqc_finding(finding: dict) -> bool:
             ).upper(),
         ]
     )
-    has_pqc = any(x in signal_blob for x in ("MLKEM", "ML-KEM", "KYBER", "X25519MLKEM", "SECP256R1MLKEM", "0X11EC", "0X11ED"))
+    has_pqc = any(
+        x in signal_blob
+        for x in (
+            "MLKEM",
+            "ML-KEM",
+            "KYBER",
+            "X25519MLKEM",
+            "SECP256R1MLKEM",
+            "SECP384R1MLKEM",
+            "X25519KYBER768DRAFT00",
+            "0X11EB",
+            "0X11EC",
+            "0X11ED",
+            "0X6399",
+        )
+    )
     has_classic = any(x in signal_blob for x in ("X25519", "X448", "ECDHE", "DHE", "SECP256R1", "P-256"))
     return has_pqc and has_classic
 
@@ -187,6 +202,17 @@ def build_scan_pdf(scan: dict) -> bytes:
 def readiness_label(avg_risk: float) -> str:
     return label_for_score(avg_risk)
 
+
+def certificate_readiness_label(scan: dict, avg_risk: float, eligible: bool = True) -> str:
+    if not eligible:
+        return "FAILED"
+    label = readiness_label(avg_risk)
+    hybrid_count, _ = hybrid_pqc_summary(scan)
+    # Preserve hybrid certificate semantics when hybrid PQC was actually observed.
+    if hybrid_count > 0 and label == "Quantum-Safe (NIST Compliant)":
+        return "Quantum-Resilient (Hybrid)"
+    return label
+
 def _draw_optional_image(c: canvas.Canvas, env_var: str, x: float, y: float, width: float, height: float) -> bool:
     raw_path = (os.getenv(env_var) or "").strip()
     if not raw_path:
@@ -310,7 +336,7 @@ def build_quantum_certificate(
     c = canvas.Canvas(buf, pagesize=landscape(A4))
     w, h = A4
     w, h = h, w
-    label = readiness_label(avg_risk)
+    label = certificate_readiness_label(scan, avg_risk, eligible=eligible)
     hybrid_count, hybrid_total = hybrid_pqc_summary(scan)
     hybrid_suffix = f" | Hybrid PQC ({hybrid_count}/{hybrid_total})" if hybrid_count > 0 else ""
     fail_reasons = list(reasons or [])

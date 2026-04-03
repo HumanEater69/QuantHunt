@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import ssl
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -161,14 +162,40 @@ def discover_assets(domain: str) -> list[str]:
     assets, _ = discover_assets_with_vpn_signals(domain)
     return assets
 
-def discover_assets_with_vpn_signals(domain: str) -> tuple[list[str], dict[str, dict[str, bool]]]:
-    assets: set[str] = {domain.lower()}
+def discover_assets_with_vpn_signals(
+    domain: str,
+    include_vpn_probes: bool = True,
+) -> tuple[list[str], dict[str, dict[str, bool]]]:
+    base = domain.lower().strip()
+    assets: set[str] = {base}
     try:
         assets.update(discover_from_crtsh(domain))
     except Exception:
         pass
     assets.update(discover_from_dns_bruteforce(domain))
 
-    vpn_signals = discover_active_vpn_signals(domain)
+    vpn_signals = discover_active_vpn_signals(domain) if include_vpn_probes else {}
     assets.update(vpn_signals.keys())
-    return sorted(assets), vpn_signals
+
+    # Keep only resolvable hosts so stale certificate-transparency entries
+    # do not dominate scan results with identical fallback scores.
+    hosts = sorted(assets)
+    max_candidates = max(12, int(os.getenv("SCAN_DISCOVERY_MAX_CANDIDATES", "80")))
+    if len(hosts) > max_candidates:
+        hosts = hosts[:max_candidates]
+
+    def _resolve_host(host: str) -> str | None:
+        if host == base:
+            return host
+        return host if _resolves(host) else None
+
+    filtered: set[str] = set()
+    workers = max(6, min(24, len(hosts))) if hosts else 6
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_resolve_host, host) for host in hosts]
+        for fut in as_completed(futures):
+            hit = fut.result()
+            if hit:
+                filtered.add(hit)
+
+    return sorted(filtered), vpn_signals

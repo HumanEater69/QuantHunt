@@ -11,7 +11,7 @@
 }
 
 .quanthunt-heading {
-  font-family: "Inter", "Montserrat", system-ui, -apple-system, sans-serif !important;
+  font-family: "Orbitron", "Outfit", system-ui, -apple-system, sans-serif !important;
   font-weight: 800 !important;
   letter-spacing: -0.02em !important;
   text-transform: uppercase;
@@ -74,8 +74,8 @@ code {
 }
 
 .qh-glass {
-  backdrop-filter: blur(14px) saturate(1.2);
   -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
 }
 
 .qh-glass-light {
@@ -87,10 +87,7 @@ code {
 }
 
 .qh-soft-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(132, 160, 194, 0.65) transparent;
   scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
 }
 
 .qh-soft-scroll::-webkit-scrollbar {
@@ -135,8 +132,8 @@ code {
   border: 1px solid rgba(154, 142, 100, 0.38);
   border-radius: 14px;
   background: linear-gradient(140deg, rgba(252, 247, 232, 0.6), rgba(218, 241, 229, 0.34));
-  backdrop-filter: blur(10px) saturate(1.14);
   -webkit-backdrop-filter: blur(10px) saturate(1.14);
+  backdrop-filter: blur(10px) saturate(1.14);
   box-shadow: 0 8px 18px rgba(110, 137, 87, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
 
@@ -155,13 +152,13 @@ code {
 }
 
 .cbom-picker-summary::before {
-  content: "▾";
+  content: "\25BE";
   margin-right: 8px;
   color: #8f7a35;
 }
 
 .cbom-picker-shell:not([open]) .cbom-picker-summary::before {
-  content: "▸";
+  content: "\25B8";
 }
 
 .cbom-picker-body {
@@ -238,24 +235,31 @@ code {
 }
 
 .cbom-liquid-glass {
-  backdrop-filter: blur(12px) saturate(1.16);
   -webkit-backdrop-filter: blur(12px) saturate(1.16);
+  backdrop-filter: blur(12px) saturate(1.16);
 }
+
 
 .cbom-hybrid-pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 4px 12px 4px 12px;
   font-family: "Orbitron", "JetBrains Mono", monospace;
-  font-size: 10px;
-  letter-spacing: 0.06em;
+  font-size: 11px;
+  letter-spacing: 0.07em;
   color: #f6fffd;
-  border: 1px solid rgba(124, 219, 206, 0.52);
-  background: linear-gradient(135deg, rgba(63, 182, 202, 0.5), rgba(56, 140, 218, 0.4));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 14px rgba(35, 110, 164, 0.24);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  border: 1.5px solid rgba(124, 219, 206, 0.62);
+  background: linear-gradient(135deg, rgba(63, 182, 202, 0.62), rgba(56, 140, 218, 0.48));
+  box-shadow: 0 2px 8px rgba(35, 110, 164, 0.18), 0 1px 0 rgba(255,255,255,0.18);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
+  backdrop-filter: blur(10px) saturate(1.1);
+  margin: 0 4px 2px 0;
+  min-width: 90px;
+  min-height: 22px;
+  text-align: center;
+  vertical-align: middle;
 }
 
 .cbom-hybrid-pill-light {
@@ -279,26 +283,29 @@ code {
 
 .cbom-exec-card {
   margin-top: 10px;
-  border-radius: 12px;
-  padding: 12px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 10px 24px rgba(75, 80, 70, 0.12);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52), 0 18px 34px rgba(64, 58, 40, 0.2);
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  animation: cbomExecRise 320ms ease;
 }
 
 .cbom-exec-card-red {
-  border: 1px solid #8f4150;
-  background: linear-gradient(145deg, rgba(155, 30, 40, 0.16), rgba(120, 20, 30, 0.1));
+  border: 1px solid rgba(171, 67, 77, 0.64);
+  background: linear-gradient(138deg, rgba(253, 145, 145, 0.34), rgba(226, 74, 84, 0.18));
 }
 
 .cbom-exec-card-green {
-  border: 1px solid #2f7f58;
-  background: linear-gradient(145deg, rgba(36, 133, 86, 0.18), rgba(24, 94, 62, 0.11));
+  border: 1px solid rgba(62, 149, 101, 0.62);
+  background: linear-gradient(138deg, rgba(157, 236, 188, 0.35), rgba(72, 176, 120, 0.2));
 }
 
 .cbom-exec-card-amber {
-  border: 1px solid #a37f2d;
-  background: linear-gradient(145deg, rgba(201, 152, 50, 0.18), rgba(163, 119, 28, 0.11));
+  border: 1px solid rgba(187, 149, 53, 0.64);
+  background: linear-gradient(138deg, rgba(252, 222, 134, 0.35), rgba(233, 167, 48, 0.2));
 }
 
 .cbom-exec-head {
@@ -311,6 +318,7 @@ code {
 .cbom-exec-title {
   font-family: "Orbitron", "JetBrains Mono", monospace;
   font-size: 12px;
+  letter-spacing: 0.08em;
 }
 
 .cbom-exec-title-red {
@@ -353,9 +361,11 @@ code {
 
 .cbom-exec-metric-card {
   border: 1px solid var(--qh-clay-border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.3);
+  -webkit-backdrop-filter: blur(12px) saturate(1.12);
+  backdrop-filter: blur(12px) saturate(1.12);
 }
 
 .cbom-exec-metric-label {
@@ -373,7 +383,7 @@ code {
 }
 
 .cbom-exec-metric-blue {
-  color: #c6a04b;
+  color: #a37f2d;
 }
 
 .cbom-exec-metric-red {
@@ -643,9 +653,192 @@ code {
 
 .cbom-tab.cbom-tab-dark .cbom-exec-metric-card {
   border-color: rgba(171, 153, 101, 0.35);
-  background: rgba(32, 48, 40, 0.34);
+  background: rgba(24, 44, 38, 0.4);
 }
 
+@keyframes cbomExecRise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+@keyframes qhPulseNotice {
+  0%,
+  100% {
+    opacity: 0.92;
+    filter: saturate(1);
+  }
+  50% {
+    opacity: 1;
+    filter: saturate(1.08);
+  }
+}
+
+@keyframes qhPanelInRight {
+  from {
+    opacity: 0.16;
+    transform: translateX(14px) translateY(10px);
+    filter: blur(1.5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes qhPanelInLeft {
+  from {
+    opacity: 0.16;
+    transform: translateX(-14px) translateY(10px);
+    filter: blur(1.5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0);
+    filter: blur(0);
+  }
+}
+
+.qh-tab-content-shell {
+  will-change: transform, opacity, filter;
+}
+
+.qh-scan-overlay-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(130, 166, 212, 0.09) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(130, 166, 212, 0.07) 1px, transparent 1px);
+  background-size: 34px 34px;
+  animation: qhScanGridDrift 14s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes qhScanGridDrift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-34px, -34px, 0);
+  }
+}
+
+.qh-scan-overlay-card {
+  animation: qhScanCardRise 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
+}
+
+@keyframes qhScanCardRise {
+  from {
+    opacity: 0;
+    transform: translate3d(-50%, 10px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0) scale(1);
+  }
+}
+
+.qh-scan-stage-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-family: "Orbitron", "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.qh-scan-progress-track {
+  position: relative;
+  overflow: hidden;
+}
+
+.qh-scan-progress-sweep {
+  position: absolute;
+  inset: 0 auto 0 -32%;
+  width: 32%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  animation: qhScanSweep 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes qhScanSweep {
+  from {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  to {
+    transform: translateX(420%);
+    opacity: 0;
+  }
+}
+
+.qh-fleet-card {
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease;
+  will-change: transform;
+}
+
+.qh-fleet-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(103, 93, 66, 0.14);
+}
+
+.qh-fleet-status-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+.qh-fleet-progress-track {
+  position: relative;
+  overflow: hidden;
+}
+
+.qh-fleet-progress-fill {
+  position: relative;
+}
+
+.qh-fleet-progress-fill[data-state="running"]::after,
+.qh-fleet-progress-fill[data-state="queued"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.25) 38%,
+    rgba(255, 255, 255, 0) 72%
+  );
+  background-size: 220% 100%;
+  animation: qhFleetStripe 1.15s linear infinite;
+}
+
+@keyframes qhFleetStripe {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -70% 0;
+  }
+}
 @media (max-width: 980px), (pointer: coarse) {
   .qh-soft-scroll {
     scroll-behavior: auto;
@@ -654,8 +847,8 @@ code {
   .qh-glass,
   .cbom-picker-shell,
   .cbom-liquid-glass {
-    backdrop-filter: blur(8px) saturate(1.08);
     -webkit-backdrop-filter: blur(8px) saturate(1.08);
+    backdrop-filter: blur(8px) saturate(1.08);
   }
 }
 
@@ -668,3 +861,4 @@ code {
     scroll-behavior: auto !important;
   }
 }
+

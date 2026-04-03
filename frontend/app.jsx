@@ -22,6 +22,7 @@ const Tooltip = RCH.Tooltip || (() => null);
 const Cell = RCH.Cell || (() => null);
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const LOCAL_API_FALLBACKS = ["http://127.0.0.1:8000", "http://localhost:8000"];
 const sanitizeApiBase = (value) => String(value || "").trim().replace(/\/+$/, "");
 const resolveApiBase = () => {
   try {
@@ -32,16 +33,39 @@ const resolveApiBase = () => {
       window.localStorage.setItem("qh_api_base", queryApi);
       return queryApi;
     }
-    const savedApi = sanitizeApiBase(window.localStorage.getItem("qh_api_base"));
-    if (savedApi) return savedApi;
   } catch {
     // Ignore storage/query failures and fall back to default local behavior.
   }
-  return LOCAL_HOSTS.has(window.location.hostname) ? "" : "";
+  if (window.location.protocol === "file:") return "http://127.0.0.1:8000";
+  if (LOCAL_HOSTS.has(window.location.hostname)) {
+    return window.location.port === "8000"
+      ? ""
+      : `http://${window.location.hostname}:8000`;
+  }
+  try {
+    const savedApi = sanitizeApiBase(window.localStorage.getItem("qh_api_base"));
+    if (savedApi) return savedApi;
+  } catch {
+    // Ignore storage/query failures and use same-origin fallback.
+  }
+  return "";
 };
-const API = resolveApiBase();
+let API = resolveApiBase();
+const setRuntimeApiBase = (nextBase) => {
+  API = sanitizeApiBase(nextBase);
+  try {
+    if (API) {
+      window.localStorage.setItem("qh_api_base", API);
+    } else {
+      window.localStorage.removeItem("qh_api_base");
+    }
+  } catch {
+    // Ignore storage failures; runtime variable is still updated.
+  }
+};
 
 const SCAN_MODELS = ["general", "banking"];
+const LOCAL_SCAN_ARCHIVE_KEY = "quanthunt_local_scan_archive_v1";
 const normalizeScanModel = (value) =>
   SCAN_MODELS.includes(String(value || "").toLowerCase())
     ? String(value).toLowerCase()
@@ -53,12 +77,20 @@ const normalizeDomain = (value) =>
     .trim()
     .toLowerCase()
     .replace(/^https?:\/\//, "")
+    .split("/")[0]
+    .split(":")[0]
     .replace(/\/+$/, "");
 const isBankingDomainName = (domain) => {
   const host = normalizeDomain(domain);
-  return host === "bank.in" || host.endsWith(".bank.in");
+  return (
+    host === "bank.in" ||
+    host.endsWith(".bank.in") ||
+    host === "bank.co.in" ||
+    host.endsWith(".bank.co.in") ||
+    host.endsWith(".bank")
+  );
 };
-const effectiveScanModelForDomain = (domain, _selectedScanModel) =>
+const effectiveScanModelForDomain = (domain, selectedScanModel) =>
   isBankingDomainName(domain) ? "banking" : "general";
 const scanModelUiLabel = (scanModel) =>
   normalizeScanModel(scanModel) === "banking" ? "BANKING" : "NON-BANK";
@@ -239,23 +271,28 @@ const parseNamedGroupIds = (value) =>
     .filter(Boolean);
 
 const isHybridPqcAsset = (row) => {
+  // Prefer backend hybrid_pqc field if present
+  if (row && row.hybrid_pqc === true) return true;
+  // Fallback to legacy detection for older scans
   const family = String(row?.key_exchange_family || "").toLowerCase();
   if (family.includes("hybrid")) return true;
-
   const algorithm = String(row?.key_exchange_algorithm || "").toUpperCase();
   if (algorithm.includes("HYBRID")) return true;
-
   const group = String(row?.key_exchange_group || "").toUpperCase();
-  const hasPqc = ["MLKEM", "ML-KEM", "KYBER", "X25519MLKEM", "SECP256R1MLKEM"].some((k) =>
+  const hasPqc = ["MLKEM", "ML-KEM", "KYBER", "X25519MLKEM", "SECP256R1MLKEM", "SECP384R1MLKEM", "X25519KYBER768DRAFT00"].some((k) =>
     group.includes(k),
   );
   const hasClassic = ["X25519", "X448", "ECDHE", "DHE", "SECP256R1", "P-256"].some((k) =>
     group.includes(k),
   );
   if (hasPqc && hasClassic) return true;
-
   const namedIds = parseNamedGroupIds(row?.key_exchange_named_group_ids);
-  return namedIds.includes("0X11EC") || namedIds.includes("0X11ED");
+  return (
+    namedIds.includes("0X11EB") ||
+    namedIds.includes("0X11EC") ||
+    namedIds.includes("0X11ED") ||
+    namedIds.includes("0X6399")
+  );
 };
 
 const BANK_PRESETS = [
@@ -2790,53 +2827,119 @@ function CyberIntelPanel({ scanModel = "general" }) {
 
 function ScanOverlay({ domain, progress }) {
   const dark = isDarkTheme();
-  const pct = Number(progress || 0);
-  return (
+  const rawPct = Number(progress || 0);
+  const pct = Number.isFinite(rawPct) ? rawPct : 0;
+  const hasBackendProgress = pct > 1;
+  const [displayedPct, setDisplayedPct] = useState(() => {
+    if (hasBackendProgress) {
+      return Math.max(1, Math.min(100, pct));
+    }
+    return 6;
+  });
+
+  useEffect(() => {
+    if (hasBackendProgress) {
+      const next = Math.max(1, Math.min(100, pct));
+      setDisplayedPct((prev) => Math.max(prev, next));
+      return;
+    }
+    const id = setInterval(() => {
+      // Keep fallback progress monotonic until backend sends real progress.
+      // This remains visibly active for long-running domains without pretending completion.
+      setDisplayedPct((prev) => {
+        if (prev < 32) return prev + 1.35;
+        if (prev < 52) return prev + 0.72;
+        if (prev < 68) return prev + 0.34;
+        if (prev < 80) return prev + 0.15;
+        if (prev < 88) return prev + 0.07;
+        return prev;
+      });
+    }, 420);
+    return () => clearInterval(id);
+  }, [hasBackendProgress, pct]);
+
+  const clampedDisplayed = Math.max(1, Math.min(100, displayedPct));
+  const overlayNode = (
     <div
-      style={{ position: "fixed", inset: 0, zIndex: 45, pointerEvents: "none" }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 2200,
+        pointerEvents: "none",
+        overflow: "hidden",
+      }}
     >
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: dark ? "rgba(6,15,28,0.62)" : "rgba(233,240,250,0.55)",
-          backdropFilter: "blur(4px)",
+          background: dark
+            ? "linear-gradient(155deg, rgba(9,18,32,0.5), rgba(18,32,52,0.42), rgba(10,20,36,0.48))"
+            : "linear-gradient(155deg, rgba(236,243,252,0.56), rgba(223,234,247,0.48), rgba(235,242,251,0.5))",
         }}
       />
       <div
         style={{
           position: "absolute",
-          left: "50%",
-          top: "50%",
-          transform: "translate(-50%, -50%)",
-          width: 360,
-          maxWidth: "88vw",
-          borderRadius: 18,
+          inset: 0,
           background: dark
-            ? "linear-gradient(155deg, #14263f, #0f1f35)"
-            : "linear-gradient(155deg, #e4e9ef, #d7dee6)",
+            ? "radial-gradient(circle at 18% 15%, rgba(146,195,255,0.18), transparent 36%), radial-gradient(circle at 82% 78%, rgba(97,172,255,0.14), transparent 42%)"
+            : "radial-gradient(circle at 18% 15%, rgba(174,205,241,0.28), transparent 38%), radial-gradient(circle at 82% 78%, rgba(145,188,236,0.22), transparent 44%)",
+        }}
+      />
+      <div
+        className="qh-scan-overlay-grid"
+        style={{ opacity: dark ? 0.72 : 0.68 }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          inset: "0 auto auto 0",
+          width: "100%",
+          height: 140,
+          background: dark
+            ? "linear-gradient(180deg, rgba(9,16,28,0.34), rgba(9,16,28,0))"
+            : "linear-gradient(180deg, rgba(230,238,248,0.52), rgba(230,238,248,0))",
+        }}
+      />
+      <div
+        className="qh-scan-overlay-card"
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "clamp(72px, 16vh, 156px)",
+          transform: "translateX(-50%)",
+          width: 440,
+          maxWidth: "92vw",
+          borderRadius: 20,
+          background: dark
+            ? "linear-gradient(155deg, rgba(20,38,63,0.86), rgba(15,31,53,0.8))"
+            : "linear-gradient(155deg, rgba(228,233,239,0.86), rgba(215,222,230,0.8))",
           border: dark
             ? "1px solid rgba(107,178,240,0.36)"
             : "1px solid rgba(97,126,164,0.28)",
+          WebkitBackdropFilter: "blur(10px) saturate(1.12)",
+          backdropFilter: "blur(10px) saturate(1.12)",
           boxShadow: dark
             ? "12px 12px 28px rgba(2,8,16,0.62), -10px -10px 22px rgba(24,48,80,0.5), inset 0 1px 0 rgba(168,218,255,0.18)"
             : "12px 12px 24px rgba(163,180,204,0.38), -10px -10px 22px rgba(255,255,255,0.9)",
-          padding: 16,
+          padding: "16px 18px",
         }}
       >
         <div
           style={{
             fontFamily: "JetBrains Mono",
-            fontSize: 11,
+            fontSize: 12,
             color: dark ? "#b8d2f4" : C.dim,
             marginBottom: 8,
           }}
         >
-          Scanning target: {domain || "unknown"}
+          SCANNING: {domain || "unknown"}
         </div>
         <div
+          className="qh-scan-progress-track"
           style={{
-            height: 10,
+            height: 12,
             borderRadius: 999,
             background: dark ? "#1a2b43" : "#d9e4f3",
             boxShadow: dark
@@ -2847,20 +2950,23 @@ function ScanOverlay({ domain, progress }) {
         >
           <div
             style={{
-              width: `${pct}%`,
+              width: `${clampedDisplayed}%`,
               height: "100%",
               borderRadius: 999,
               background: dark
                 ? "linear-gradient(90deg, #7f9dc2, #9ab2d2)"
                 : "linear-gradient(90deg, #698fbe, #8eacd0)",
-              boxShadow: "none",
+              boxShadow: dark
+                ? "0 0 12px rgba(156,188,226,0.45)"
+                : "0 0 12px rgba(93,132,180,0.35)",
               transition: "width 180ms ease",
             }}
           />
+          {clampedDisplayed < 100 && <div className="qh-scan-progress-sweep" />}
         </div>
         <div style={{ marginTop: 7, textAlign: "right" }}>
           <ClayNumber
-            value={`${pct}%`}
+            value={`${Math.max(0, Math.min(100, Number(clampedDisplayed))).toFixed(0)}%`}
             tone={dark ? C.cyan : C.blue}
             size={10}
             minWidth={56}
@@ -2869,6 +2975,11 @@ function ScanOverlay({ domain, progress }) {
       </div>
     </div>
   );
+
+  if (window.ReactDOM && typeof window.ReactDOM.createPortal === "function") {
+    return window.ReactDOM.createPortal(overlayNode, document.body);
+  }
+  return overlayNode;
 }
 
 function ScannerTab({
@@ -2897,6 +3008,9 @@ function ScannerTab({
     actions: [],
   });
   const logRef = useRef(null);
+  const archiveInFlightRef = useRef(new Set());
+  const archiveSyncedRef = useRef(new Set());
+  const lastProgressRef = useRef(0);
 
   useEffect(() => {
     if (flashMessage) {
@@ -2981,11 +3095,151 @@ function ScannerTab({
     Array.from(
       new Set(
         batch
-          .split(/[\n,]+/)
-          .map((x) => x.trim().toLowerCase())
-          .filter(Boolean),
+          .split(/[\s,;]+/)
+          .map((x) => normalizeDomain(x))
+          .filter((x) => Boolean(x) && x.includes(".")),
       ),
     );
+
+  const readLocalArchive = () => {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_SCAN_ARCHIVE_KEY);
+      if (!raw) {
+        return { version: 1, updated_at: null, scans: {} };
+      }
+      const parsed = JSON.parse(raw);
+      return {
+        version: Number(parsed?.version || 1),
+        updated_at: parsed?.updated_at || null,
+        scans: parsed?.scans && typeof parsed.scans === "object" ? parsed.scans : {},
+      };
+    } catch {
+      return { version: 1, updated_at: null, scans: {} };
+    }
+  };
+
+  const writeLocalArchive = (archive) => {
+    try {
+      window.localStorage.setItem(
+        LOCAL_SCAN_ARCHIVE_KEY,
+        JSON.stringify(archive),
+      );
+      return true;
+    } catch {
+      setFlashMessage({
+        type: "error",
+        text:
+          "Local archive storage is full or unavailable. Export current data, clear browser storage, and retry.",
+      });
+      return false;
+    }
+  };
+
+  const persistLocalScanSnapshot = (snapshot) => {
+    const scanId = String(snapshot?.scan_id || "").trim();
+    if (!scanId) return;
+    const archive = readLocalArchive();
+    const next = {
+      ...(archive.scans?.[scanId] || {}),
+      ...snapshot,
+      scan_id: scanId,
+      saved_at: new Date().toISOString(),
+    };
+    const updatedArchive = {
+      ...archive,
+      updated_at: new Date().toISOString(),
+      scans: {
+        ...(archive.scans || {}),
+        [scanId]: next,
+      },
+    };
+    writeLocalArchive(updatedArchive);
+  };
+
+  const snapshotFromScanDetail = (detail, source = "single") => {
+    const scan = detail?.scan || {};
+    const scanId = String(scan?.scan_id || "").trim();
+    if (!scanId) return null;
+    const assets = Array.isArray(detail?.assets) ? detail.assets : [];
+    const avgRisk = assets.length
+      ? Number(
+          (
+            assets.reduce((sum, row) => sum + Number(row?.risk_score || 0), 0) /
+            assets.length
+          ).toFixed(2),
+        )
+      : null;
+    const postureCounts = { pass: 0, hybrid: 0, fail: 0 };
+    for (const row of assets) {
+      const state =
+        stateFromPosture(row?.label) ||
+        modelStateFromRiskScore(Number(row?.risk_score || 0)) ||
+        "fail";
+      postureCounts[state] += 1;
+    }
+    const lastBlock = Array.isArray(detail?.chain_blocks)
+      ? detail.chain_blocks[detail.chain_blocks.length - 1]
+      : null;
+    return {
+      scan_id: scanId,
+      domain: scan?.domain || "",
+      scan_model: normalizeScanModel(scan?.scan_model || scanModel),
+      status: String(scan?.status || "unknown").toLowerCase(),
+      progress: Number(scan?.progress || 0),
+      deep_scan: Boolean(scan?.deep_scan),
+      created_at: scan?.created_at || null,
+      completed_at: scan?.completed_at || null,
+      error: scan?.error || "",
+      asset_count: assets.length,
+      avg_risk_score: avgRisk,
+      pass_assets: postureCounts.pass,
+      hybrid_assets: postureCounts.hybrid,
+      fail_assets: postureCounts.fail,
+      chain_block_index: Number(lastBlock?.block_index || 0),
+      source,
+    };
+  };
+
+  const archiveScanDetail = (detail, source = "single") => {
+    const snapshot = snapshotFromScanDetail(detail, source);
+    if (!snapshot) return;
+    persistLocalScanSnapshot(snapshot);
+    archiveSyncedRef.current.add(snapshot.scan_id);
+  };
+
+  const archiveScanMeta = (meta, source = "fleet-meta") => {
+    const scanId = String(meta?.scan_id || "").trim();
+    if (!scanId) return;
+    persistLocalScanSnapshot({
+      scan_id: scanId,
+      domain: String(meta?.domain || "").toLowerCase(),
+      scan_model: normalizeScanModel(meta?.scan_model || scanModel),
+      status: String(meta?.status || "queued").toLowerCase(),
+      progress: Number(meta?.progress || 0),
+      source,
+    });
+  };
+
+  const archiveScanById = async (item, source = "fleet-completed") => {
+    const scanId = String(item?.scan_id || "").trim();
+    if (!scanId || archiveInFlightRef.current.has(scanId) || archiveSyncedRef.current.has(scanId)) {
+      return;
+    }
+    archiveInFlightRef.current.add(scanId);
+    try {
+      const resp = await fetch(`${API}/api/scan/${scanId}`);
+      if (resp.ok) {
+        const detail = await resp.json();
+        archiveScanDetail(detail, source);
+      } else {
+        archiveScanMeta(item, source);
+      }
+    } catch {
+      archiveScanMeta(item, source);
+    } finally {
+      archiveInFlightRef.current.delete(scanId);
+    }
+  };
 
   const topThreeActions = (findings = []) => {
     const all = (findings || [])
@@ -3045,6 +3299,33 @@ function ScannerTab({
     URL.revokeObjectURL(url);
   };
 
+  const fleetArtifactName = (item, kind) => {
+    const raw = String(item?.domain || item?.scan_id || "scan")
+      .toLowerCase()
+      .replace(/[^a-z0-9.-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const slug = raw || "scan";
+    return kind === "report"
+      ? `quanthunt-report-${slug}.pdf`
+      : `quanthunt-certificate-${slug}.pdf`;
+  };
+
+  const downloadFleetArtifact = async (item, kind = "report") => {
+    if (!item?.scan_id) return;
+    if (String(item.status || "").toLowerCase() !== "completed") {
+      setFlashMessage({
+        type: "error",
+        text: `Artifact not ready for ${item.domain || item.scan_id}. Wait until the scan completes.`,
+      });
+      return;
+    }
+    const path =
+      kind === "report"
+        ? `/api/scan/${item.scan_id}/report.pdf`
+        : `/api/scan/${item.scan_id}/certificate.pdf`;
+    await downloadArtifact(path, fleetArtifactName(item, kind));
+  };
+
   const loadScanDetail = async (id) => {
     const detailResp = await fetch(`${API}/api/scan/${id}`);
     if (!detailResp.ok) return null;
@@ -3053,27 +3334,106 @@ function ScannerTab({
     return detail;
   };
 
-  const executeScan = async (target, requestedModel) => {
+  const refreshFleetFromIndividualScans = async (items) => {
+    const refreshed = await Promise.all(
+      (items || []).map(async (item) => {
+        try {
+          const resp = await fetch(`${API}/api/scan/${item.scan_id}`);
+          if (!resp.ok) return item;
+          const detail = await resp.json();
+          if (!detail?.scan) return item;
+          const state = String(detail.scan.status || item.status || "queued").toLowerCase();
+          const progress = Number(
+            state === "completed" || state === "failed"
+              ? 100
+              : detail.scan.progress ?? item.progress ?? 0,
+          );
+          return {
+            ...item,
+            domain: detail.scan.domain || item.domain,
+            status: state,
+            progress: Math.max(0, Math.min(100, progress)),
+            data: detail,
+          };
+        } catch {
+          return item;
+        }
+      }),
+    );
+
+    const total = refreshed.length;
+    const completed = refreshed.filter((x) => x.status === "completed").length;
+    const failed = refreshed.filter((x) => x.status === "failed").length;
+    const running = refreshed.filter((x) => x.status === "running").length;
+    const queued = refreshed.filter((x) => x.status === "queued").length;
+    const progressPct =
+      Math.round(
+        (refreshed.reduce((acc, x) => acc + Number(x.progress || 0), 0) /
+          Math.max(total, 1)) *
+          100,
+      ) / 100;
+
+    setFleetBatchScans(refreshed);
+    setFleetScans(refreshed);
+    setFleetAggregate({
+      total,
+      completed,
+      failed,
+      running,
+      queued,
+      progressPct,
+      backendInstant: total > FLEET_BACKEND_INSTANT_THRESHOLD,
+    });
+    if (completed + failed >= total) {
+      setFleetPolling(false);
+    }
+  };
+
+  const executeScan = async (target, requestedModel, deepScan = true) => {
+    const scanRequest = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        domain: target,
+        deep_scan: Boolean(deepScan),
+        scan_model: requestedModel,
+      }),
+    };
+
+    const tryCreateScan = (base) => fetch(`${base}/api/scan`, scanRequest);
+
     let r;
     try {
-      r = await fetch(`${API}/api/scan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          domain: target,
-          deep_scan: true,
-          scan_model: requestedModel,
-        }),
-      });
+      r = await tryCreateScan(API);
     } catch {
-      return setFlashMessage({
-        text:
-          "- Backend offline or blocked (CORS/network).\n" +
-          "- Set API with ?api=https://your-backend-url",
-        type: "error",
-      });
+      let recovered = null;
+      let recoveredBase = "";
+      for (const candidate of LOCAL_API_FALLBACKS) {
+        if (sanitizeApiBase(API) === candidate) continue;
+        try {
+          recovered = await tryCreateScan(candidate);
+          recoveredBase = candidate;
+          break;
+        } catch {
+          // Try next local fallback candidate.
+        }
+      }
+
+      if (!recovered) {
+        setPolling(false);
+        return setFlashMessage({
+          text:
+            "- Backend offline or blocked (CORS/network).\n" +
+            "- Set API with ?api=https://your-backend-url",
+          type: "error",
+        });
+      }
+
+      r = recovered;
+      setRuntimeApiBase(recoveredBase);
     }
     if (!r.ok) {
+      setPolling(false);
       const err = await r.json().catch(() => ({}));
       const detail =
         typeof err?.detail === "string"
@@ -3087,6 +3447,29 @@ function ScannerTab({
       });
     }
     const d = await r.json();
+    if (String(d?.status || "").toLowerCase() !== "completed") {
+      setFlashMessage({
+        type: "success",
+        durationMs: 4200,
+        text:
+          `SCAN STARTED: ${target.toLowerCase()} ` +
+          `(${scanModelUiLabel(requestedModel)} mode, ${deepScan ? "deep" : "quick"} profile).`,
+      });
+    }
+    lastProgressRef.current = Math.max(
+      0,
+      Math.min(100, Number(d?.progress ?? 1)),
+    );
+    archiveScanMeta(
+      {
+        scan_id: d.scan_id,
+        domain: target,
+        status: d.status,
+        progress: d.status === "completed" ? 100 : lastProgressRef.current,
+        scan_model: d.scan_model || requestedModel,
+      },
+      "single-submit",
+    );
     setScanId(d.scan_id);
     setFormula(null);
     setBoardroomView({
@@ -3105,20 +3488,34 @@ function ScannerTab({
         });
         return;
       }
+      archiveScanDetail(detail, "single-reused");
       setPolling(false);
       return;
     }
 
     if (d.reused && (d.status === "queued" || d.status === "running")) {
-      await loadScanDetail(d.scan_id);
+      const detail = await loadScanDetail(d.scan_id);
+      if (detail) archiveScanDetail(detail, "single-reused-running");
     } else {
-      setScanData(null);
+      setScanData((prev) => ({
+        ...(prev || {}),
+        scan: {
+          ...(prev?.scan || {}),
+          scan_id: d.scan_id,
+          domain: target,
+          status: String(d.status || "running").toLowerCase(),
+          progress: Math.max(
+            Number(prev?.scan?.progress || 0),
+            lastProgressRef.current || 1,
+          ),
+        },
+      }));
     }
     setPolling(true);
   };
 
   const startScan = async () => {
-    const target = domain.trim();
+    const target = normalizeDomain(domain);
     if (!target) return;
 
     if (
@@ -3136,12 +3533,36 @@ function ScannerTab({
       return;
     }
 
+    setFlashMessage(null);
+    setDomain(target);
+
+    // Optimistic UI: show full-tab scanning overlay instantly on click.
+    setScanData((prev) => ({
+      ...(prev || {}),
+      scan: {
+        ...(prev?.scan || {}),
+        domain: target,
+        status: "running",
+        progress: 0,
+      },
+    }));
+    lastProgressRef.current = 0;
+    setPolling(true);
+
     const requestedModel = effectiveScanModelForDomain(target, scanModel);
+    const deepScan = requestedModel === "banking";
     if (requestedModel !== normalizeScanModel(scanModel)) {
       onAutoSwitchForDomain(target, requestedModel);
+      setFlashMessage({
+        type: "success",
+        durationMs: 8000,
+        text:
+          `AUTO-SWITCH DETECTED: ${target.toLowerCase()} routed to ${scanModelUiLabel(requestedModel)} mode. ` +
+          `Auto-scan (${deepScan ? "deep" : "quick"} profile) is starting now.`,
+      });
       return;
     }
-    await executeScan(target, requestedModel);
+    await executeScan(target, requestedModel, deepScan);
   };
 
   useEffect(() => {
@@ -3151,9 +3572,31 @@ function ScannerTab({
       normalizeScanModel(scanModel)
     )
       return;
-    onAutoScanConsumed();
+    let alive = true;
     setDomain(pendingAutoScan.domain);
-    executeScan(pendingAutoScan.domain, pendingAutoScan.scan_model);
+    setScanData((prev) => ({
+      ...(prev || {}),
+      scan: {
+        ...(prev?.scan || {}),
+        domain: pendingAutoScan.domain,
+        status: "running",
+        progress: 0,
+      },
+    }));
+    setPolling(true);
+
+    (async () => {
+      try {
+        const deepScan = normalizeScanModel(pendingAutoScan.scan_model) === "banking";
+        await executeScan(pendingAutoScan.domain, pendingAutoScan.scan_model, deepScan);
+      } finally {
+        if (alive) onAutoScanConsumed();
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
   }, [pendingAutoScan, scanModel]);
 
   useEffect(() => {
@@ -3172,10 +3615,30 @@ function ScannerTab({
           return;
         }
 
-        setScanData(d);
-        if (d.scan.status === "completed" || d.scan.status === "failed") {
+        const status = String(d?.scan?.status || "").toLowerCase();
+        const incomingProgress = Math.max(
+          0,
+          Math.min(100, Number(d?.scan?.progress ?? 0)),
+        );
+        const stableProgress =
+          status === "running"
+            ? Math.max(lastProgressRef.current, incomingProgress)
+            : incomingProgress;
+        lastProgressRef.current = stableProgress;
+
+        const stabilized = {
+          ...d,
+          scan: {
+            ...(d.scan || {}),
+            progress: stableProgress,
+          },
+        };
+
+        setScanData(stabilized);
+        archiveScanDetail(stabilized, "single-poll");
+        if (status === "completed" || status === "failed") {
           setPolling(false);
-          if (d.scan.status === "failed") {
+          if (status === "failed") {
             setFlashMessage({
               text: "- Scan engine critical failure",
               type: "error",
@@ -3211,20 +3674,18 @@ function ScannerTab({
       const actions = topThreeActions(findings);
       const reasons = Array.isArray(status?.reasons) ? status.reasons : [];
       const leadReason = reasons[0] || "Strict readiness checks are still in progress.";
+      const certKind = String(status?.certificate_kind || "").toLowerCase();
 
       if (status && status.eligible) {
+        const certifiedState = certKind === "hybrid-pass" ? "hybrid" : "pass";
         setBoardroomView({
-          state: "pass",
+          state: certifiedState,
           why: `Strict certification checks passed (Avg HNDL: ${status.avg_hndl_risk ?? "n/a"}).`,
           actions,
         });
       } else if (status && !status.eligible) {
-        const fallbackScore = Number.isFinite(Number(status.avg_hndl_risk))
-          ? Number(status.avg_hndl_risk)
-          : Number(nextFormula.total || 0);
-        const inferred = boardroomStateFromScore(fallbackScore);
         setBoardroomView({
-          state: inferred === "pass" ? "hybrid" : inferred,
+          state: "fail",
           why: leadReason,
           actions,
         });
@@ -3276,7 +3737,10 @@ function ScannerTab({
             })),
           }),
         });
-        if (!r.ok) return;
+        if (!r.ok) {
+          await refreshFleetFromIndividualScans(fleetBatchScans);
+          return;
+        }
         const d = await r.json().catch(() => ({}));
         const scans = Array.isArray(d?.scans) ? d.scans : [];
         const byId = new Map(scans.map((x) => [x.scan_id, x]));
@@ -3292,6 +3756,12 @@ function ScannerTab({
         });
 
         setFleetBatchScans(updatedAll);
+        updatedAll.forEach((item) => archiveScanMeta(item, "fleet-progress"));
+        updatedAll
+          .filter((item) => String(item.status || "").toLowerCase() === "completed")
+          .forEach((item) => {
+            archiveScanById(item, "fleet-completed");
+          });
 
         const backendInstant = String(d?.execution_mode || "interactive") === "backend_instant";
         const backendThreshold = Number(d?.backend_threshold ?? 5);
@@ -3314,29 +3784,77 @@ function ScannerTab({
         if (!Boolean(d?.in_progress)) {
           setFleetPolling(false);
         }
-      } catch (_) {}
+      } catch (_) {
+        await refreshFleetFromIndividualScans(fleetBatchScans);
+      }
     }, 1800);
 
     return () => clearInterval(id);
   }, [fleetPolling, fleetBatchScans, scanModel]);
 
   const launchBatch = async () => {
-    const domains = batch
-      .split(/[\n,]+/)
-      .map((x) => x.trim())
-      .filter(Boolean);
+    const domains = parseFleetDomains();
     if (!domains.length) return;
-    const r = await fetch(`${API}/api/scan/batch`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ domains, scan_model: scanModel }),
-    });
+    setFleetPolling(false);
+
+    const routedModels = domains.map((host) =>
+      effectiveScanModelForDomain(host, scanModel),
+    );
+    const allBanking = routedModels.every((model) => model === "banking");
+    const turboFleet = domains.length >= 40;
+    const desiredDeepScan = allBanking && !turboFleet;
+    const payload = {
+      domains,
+      scan_model: scanModel,
+      deep_scan: desiredDeepScan,
+    };
+    const trySubmitBatch = (base) =>
+      fetch(`${base}/api/scan/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    let r;
+    try {
+      r = await trySubmitBatch(API);
+    } catch {
+      let recovered = null;
+      let recoveredBase = "";
+      for (const candidate of LOCAL_API_FALLBACKS) {
+        if (sanitizeApiBase(API) === candidate) continue;
+        try {
+          recovered = await trySubmitBatch(candidate);
+          recoveredBase = candidate;
+          break;
+        } catch {
+          // Try next local fallback candidate.
+        }
+      }
+      if (!recovered) {
+        setFleetBatchScans([]);
+        setFleetScans([]);
+        setFleetAggregate(null);
+        setFleetPolling(false);
+        setFlashMessage({
+          type: "error",
+          text:
+            "- Fleet dispatch failed (backend unreachable)\n" +
+            "- Set API with ?api=https://your-backend-url",
+        });
+        return;
+      }
+      r = recovered;
+      setRuntimeApiBase(recoveredBase);
+    }
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
       const detail =
         typeof d?.detail === "string"
           ? d.detail
           : d?.detail?.message || "Batch scan failed.";
+      setFleetBatchScans([]);
+      setFleetScans([]);
+      setFleetAggregate(null);
       setFlashMessage({
         type: "error",
         text: `- Fleet scan failed\n- Reason: ${detail}`,
@@ -3349,6 +3867,8 @@ function ScannerTab({
     const executionMode = String(d?.execution_mode || "interactive");
     const backendInstant = executionMode === "backend_instant";
     const backendThreshold = Number(d?.backend_threshold ?? 5);
+    const effectiveDeepScan = Boolean(d?.effective_deep_scan ?? !turboFleet);
+    const autoShallowMode = Boolean(d?.auto_shallow_mode);
     const selectedModel = normalizeScanModel(scanModel);
     const autoSwitched = items.filter(
       (x) => normalizeScanModel(x?.scan_model) !== selectedModel,
@@ -3357,11 +3877,20 @@ function ScannerTab({
       scan_id: x.scan_id,
       domain: x.domain,
       status: x.status,
-      progress: x.status === "completed" ? 100 : 0,
+      progress: Number(
+        x.progress ??
+          (x.status === "completed" ? 100 : x.status === "running" ? 1 : 0),
+      ),
       reused: Boolean(x.reused),
       scan_model: normalizeScanModel(x.scan_model || scanModel),
       data: null,
     }));
+    mappedScans.forEach((item) => archiveScanMeta(item, "fleet-submit"));
+    mappedScans
+      .filter((item) => String(item.status || "").toLowerCase() === "completed")
+      .forEach((item) => {
+        archiveScanById(item, "fleet-reused-completed");
+      });
 
     setFleetBatchScans(mappedScans);
     setFleetAggregate({
@@ -3389,25 +3918,28 @@ function ScannerTab({
       );
     }
 
-    const modeLine = backendInstant
-      ? `BACKEND INSTANT MODE ACTIVE: ${items.length} domain(s) are processing server-side and persisted. Showing first ${Math.min(items.length, backendThreshold)} for quick view.`
-      : "";
     if (autoSwitched.length > 0) {
-      const switchedDomains = autoSwitched.map((x) => x.domain).join(", ");
+      const switchedDomains = autoSwitched
+        .map(
+          (x) =>
+            `${x.domain}=>${scanModelUiLabel(x.scan_model || selectedModel)}`,
+        )
+        .join(", ");
       setFlashMessage({
         type: "success",
         text:
-          `FLEET INITIATED: ${scheduled} targets scheduled, ${reused} from intelligence cache.\n` +
-          `${modeLine}${modeLine ? "\n" : ""}` +
-          `AUTO MODE ROUTING ACTIVE: ${autoSwitched.length} domain(s) were routed to NON-BANK mode in backend (${switchedDomains}).\n` +
-          `Artifacts (report/certificate/CBOM/analysis) are available under their respective mode tabs only.`,
+          `FLEET INITIATED: ${scheduled} targets scheduled, ${reused} from cache.` +
+          (backendInstant ? ` Backend instant mode active.` : "") +
+          (autoShallowMode ? ` Shallow profile selected for faster queueing.` : ` ${effectiveDeepScan ? "Deep profile retained." : "Shallow profile retained."}`) +
+          ` Auto-routed ${autoSwitched.length} domain(s): ${switchedDomains}.`,
       });
     } else {
       setFlashMessage({
         type: "success",
         text:
-          `FLEET INITIATED: ${scheduled} targets scheduled, ${reused} from intelligence cache.` +
-          (modeLine ? `\n${modeLine}` : ""),
+          `FLEET INITIATED: ${scheduled} targets scheduled, ${reused} from cache.` +
+          (backendInstant ? ` Backend instant mode active.` : "") +
+          (autoShallowMode ? ` Shallow profile selected for faster queueing.` : ` ${effectiveDeepScan ? "Deep profile retained." : "Shallow profile retained."}`),
       });
     }
     setBatch("");
@@ -3418,6 +3950,7 @@ function ScannerTab({
     setScanId(item.scan_id);
     const detail = item.data || (await loadScanDetail(item.scan_id));
     if (!detail) return;
+    archiveScanDetail(detail, "fleet-open");
     setScanData(detail);
     setDomain(detail?.scan?.domain || item.domain || "");
     if (
@@ -3430,6 +3963,7 @@ function ScannerTab({
 
   const currentMode = normalizeScanModel(scanModel);
   const darkTheme = isDarkTheme();
+  const flashFloating = Boolean(flashMessage?.centered || polling);
   const inModeFleetScans = fleetScans.filter(
     (item) => normalizeScanModel(item.scan_model || scanModel) === currentMode,
   );
@@ -3450,7 +3984,15 @@ function ScannerTab({
   }, [fleetBatchScans, fleetStatusQuery, fleetStatusFilter]);
 
   return (
-    <div style={{ display: "grid", gap: 18 }}>
+    <div
+      style={{
+        display: "grid",
+        gap: 18,
+        position: "relative",
+        isolation: "isolate",
+        borderRadius: 20,
+      }}
+    >
       {polling && (
         <ScanOverlay
           domain={scanData?.scan?.domain || domain}
@@ -3539,17 +4081,23 @@ function ScannerTab({
         {flashMessage && (
           <div
             style={{
-              position: flashMessage.centered ? "fixed" : "relative",
-              left: flashMessage.centered ? "50%" : undefined,
-              top: flashMessage.centered ? "50%" : undefined,
-              transform: flashMessage.centered ? "translate(-50%, -50%)" : undefined,
-              zIndex: flashMessage.centered ? 3000 : undefined,
-              minWidth: flashMessage.centered ? "min(86vw, 780px)" : undefined,
-              maxWidth: flashMessage.centered ? "86vw" : undefined,
+              position: flashFloating ? "fixed" : "relative",
+              left: flashFloating ? "50%" : undefined,
+              top: flashMessage.centered ? "50%" : flashFloating ? 78 : undefined,
+              transform: flashMessage.centered
+                ? "translate(-50%, -50%)"
+                : flashFloating
+                  ? "translateX(-50%)"
+                  : undefined,
+              zIndex: flashFloating ? 3200 : undefined,
+              minWidth: flashFloating ? "min(86vw, 780px)" : undefined,
+              maxWidth: flashFloating ? "86vw" : undefined,
               background:
                 flashMessage.type === "error"
                   ? "linear-gradient(145deg, rgba(145,0,20,0.42), rgba(100,0,10,0.30))"
-                  : "rgba(40,167,69,0.15)",
+                  : flashFloating
+                    ? "linear-gradient(145deg, rgba(23,99,70,0.76), rgba(20,85,61,0.64))"
+                    : "rgba(40,167,69,0.15)",
               border: `1px solid ${flashMessage.type === "error" ? C.red : C.green}`,
               color: flashMessage.type === "error" ? C.red : C.green,
               padding: "12px 18px",
@@ -3561,12 +4109,14 @@ function ScannerTab({
               alignItems: flashMessage.centered ? "flex-start" : "center",
               gap: 12,
               lineHeight: 1.45,
-              backdropFilter: flashMessage.centered ? "blur(22px) saturate(1.15)" : undefined,
-              WebkitBackdropFilter: flashMessage.centered ? "blur(22px) saturate(1.15)" : undefined,
-              boxShadow: flashMessage.centered
-                ? "0 22px 55px rgba(60,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.14)"
+              backdropFilter: flashFloating ? "blur(16px) saturate(1.12)" : undefined,
+              WebkitBackdropFilter: flashFloating ? "blur(16px) saturate(1.12)" : undefined,
+              boxShadow: flashFloating
+                ? flashMessage.type === "error"
+                  ? "0 22px 55px rgba(60,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.14)"
+                  : "0 18px 44px rgba(16,46,35,0.42), inset 0 1px 0 rgba(255,255,255,0.16)"
                 : undefined,
-              animation: "pulse 2s infinite",
+              animation: "qhPulseNotice 2s ease-in-out infinite",
             }}
           >
             <span style={{ fontSize: 16, marginTop: flashMessage.centered ? 2 : 0 }}>
@@ -3613,6 +4163,20 @@ function ScannerTab({
             size={10}
             minWidth={56}
           />
+        </div>
+        <div
+          style={{
+            marginTop: 4,
+            color: C.dim,
+            fontFamily: "JetBrains Mono",
+            fontSize: 10,
+            opacity: 0.92,
+          }}
+        >
+          Scan ID: {scanData?.scan?.scan_id || "-"} | API source:{" "}
+          {API || "same-origin (/api)"} | Effective mode:{" "}
+          {scanModelUiLabel(scanData?.scan?.scan_model || scanModel)} | Profile:{" "}
+          {scanData?.scan?.deep_scan ? "deep" : "quick"}
         </div>
 
         {!!scanData?.assets?.length && (
@@ -3938,7 +4502,7 @@ function ScannerTab({
         <div
           style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}
         >
-          <Btn onClick={launchBatch} disabled={!batch.trim() || polling}>
+          <Btn onClick={launchBatch} disabled={!batch.trim()}>
             LAUNCH BATCH
           </Btn>
           <Btn onClick={() => setBatch(domain.trim() ? domain.trim() : "")}>
@@ -3980,6 +4544,7 @@ function ScannerTab({
                 Fleet Batch Live Progress
               </div>
               <div
+                className="qh-fleet-progress-track"
                 style={{
                   height: 10,
                   borderRadius: 999,
@@ -3990,6 +4555,16 @@ function ScannerTab({
                 }}
               >
                 <div
+                  className="qh-fleet-progress-fill"
+                  data-state={
+                    fleetAggregate.running > 0
+                      ? "running"
+                      : fleetAggregate.queued > 0
+                        ? "queued"
+                        : fleetAggregate.failed > 0
+                          ? "failed"
+                          : "completed"
+                  }
                   style={{
                     width: `${Math.max(0, Math.min(100, Number(fleetAggregate.progressPct || 0)))}%`,
                     height: "100%",
@@ -4077,6 +4652,7 @@ function ScannerTab({
                   {autoRoutedFleetScans.map((item) => (
                     <div
                       key={`auto-${item.scan_id}`}
+                      className="qh-fleet-card"
                       style={{
                         display: "flex",
                         justifyContent: "space-between",
@@ -4084,12 +4660,33 @@ function ScannerTab({
                         alignItems: "center",
                         fontFamily: "JetBrains Mono",
                         fontSize: 11,
+                        borderRadius: 10,
+                        border: `1px solid ${C.border}`,
+                        padding: 8,
+                        background: "rgba(132,170,208,0.06)",
                       }}
                     >
-                      <span style={{ color: C.text }}>{item.domain}</span>
-                      <span style={{ color: C.orange }}>
-                        mode: {scanModelUiLabel(item.scan_model || scanModel)}
-                      </span>
+                      <div style={{ display: "grid", gap: 4, flex: 1 }}>
+                        <span style={{ color: C.text }}>{item.domain}</span>
+                        <span style={{ color: C.dim, fontSize: 10 }}>
+                          {String(item.status || "queued").toUpperCase()} | {Number(item.progress || 0)}% | mode: {scanModelUiLabel(item.scan_model || scanModel)}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        <Btn onClick={() => openFleetScan(item)}>OPEN</Btn>
+                        <Btn
+                          onClick={() => downloadFleetArtifact(item, "report")}
+                          disabled={String(item.status || "").toLowerCase() !== "completed"}
+                        >
+                          REPORT
+                        </Btn>
+                        <Btn
+                          onClick={() => downloadFleetArtifact(item, "certificate")}
+                          disabled={String(item.status || "").toLowerCase() !== "completed"}
+                        >
+                          CERT
+                        </Btn>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -4099,6 +4696,7 @@ function ScannerTab({
               {inModeFleetScans.map((item) => (
                 <div
                   key={item.scan_id}
+                  className="qh-fleet-card"
                   style={{
                     borderRadius: 12,
                     border: `1px solid ${C.border}`,
@@ -4140,6 +4738,7 @@ function ScannerTab({
                       style={{ display: "flex", alignItems: "center", gap: 8 }}
                     >
                       <span
+                        className="qh-fleet-status-chip"
                         style={{
                           fontFamily: "JetBrains Mono",
                           fontSize: 11,
@@ -4149,6 +4748,18 @@ function ScannerTab({
                               : item.status === "completed"
                                 ? C.green
                                 : C.cyan,
+                          border:
+                            item.status === "failed"
+                              ? `1px solid ${C.red}66`
+                              : item.status === "completed"
+                                ? `1px solid ${C.green}66`
+                                : `1px solid ${C.cyan}66`,
+                          background:
+                            item.status === "failed"
+                              ? `${C.red}1c`
+                              : item.status === "completed"
+                                ? `${C.green}18`
+                                : `${C.cyan}18`,
                         }}
                       >
                         {String(item.status || "queued").toUpperCase()}
@@ -4166,9 +4777,22 @@ function ScannerTab({
                         minWidth={62}
                       />
                       <Btn onClick={() => openFleetScan(item)}>OPEN</Btn>
+                      <Btn
+                        onClick={() => downloadFleetArtifact(item, "report")}
+                        disabled={String(item.status || "").toLowerCase() !== "completed"}
+                      >
+                        REPORT
+                      </Btn>
+                      <Btn
+                        onClick={() => downloadFleetArtifact(item, "certificate")}
+                        disabled={String(item.status || "").toLowerCase() !== "completed"}
+                      >
+                        CERT
+                      </Btn>
                     </div>
                   </div>
                   <div
+                    className="qh-fleet-progress-track"
                     style={{
                       marginTop: 8,
                       height: 8,
@@ -4178,6 +4802,8 @@ function ScannerTab({
                     }}
                   >
                     <div
+                      className="qh-fleet-progress-fill"
+                      data-state={String(item.status || "queued").toLowerCase()}
                       style={{
                         width: `${Math.max(0, Math.min(100, Number(item.progress || 0)))}%`,
                         height: "100%",
@@ -4313,6 +4939,7 @@ function ScannerTab({
                   return (
                     <div
                       key={`modal-${item.scan_id}`}
+                      className="qh-fleet-card"
                       style={{
                         borderRadius: 10,
                         border: "1px solid rgba(176,139,75,0.32)",
@@ -4333,8 +4960,18 @@ function ScannerTab({
                       <div style={{ color: "#6f5a2a", fontFamily: "JetBrains Mono", fontSize: 10 }}>
                         {item.scan_id} | mode: {scanModelUiLabel(item.scan_model || scanModel)}
                       </div>
-                      <div style={{ height: 6, borderRadius: 999, overflow: "hidden", background: "rgba(108,85,38,0.14)" }}>
+                      <div
+                        className="qh-fleet-progress-track"
+                        style={{
+                          height: 6,
+                          borderRadius: 999,
+                          overflow: "hidden",
+                          background: "rgba(108,85,38,0.14)",
+                        }}
+                      >
                         <div
+                          className="qh-fleet-progress-fill"
+                          data-state={state}
                           style={{
                             width: `${Math.max(0, Math.min(100, Number(item.progress || 0)))}%`,
                             height: "100%",
@@ -4343,6 +4980,21 @@ function ScannerTab({
                             transition: "width 180ms ease",
                           }}
                         />
+                      </div>
+                      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                        <Btn onClick={() => openFleetScan(item)}>OPEN</Btn>
+                        <Btn
+                          onClick={() => downloadFleetArtifact(item, "report")}
+                          disabled={state !== "completed"}
+                        >
+                          REPORT
+                        </Btn>
+                        <Btn
+                          onClick={() => downloadFleetArtifact(item, "certificate")}
+                          disabled={state !== "completed"}
+                        >
+                          CERT
+                        </Btn>
                       </div>
                     </div>
                   );
@@ -4780,6 +5432,7 @@ function CBOMTab({ scanModel = "general" }) {
           comp?.cryptoProperties?.protocolProperties?.primaryCipherSuite ||
           "",
         hndl_risk_score: props["hndl-risk-score"] || "",
+        hndl_risk_status: props["hndl-risk-status"] || "",
         label: canonicalLabel,
         hndl_label: canonicalLabel,
         quantum_safe: props["quantum-safe"] || "",
@@ -5024,13 +5677,21 @@ function CBOMTab({ scanModel = "general" }) {
     0,
     cbomRows.length - pqcCapableCount - classicalOnlyCount,
   );
-  const avgHndlRisk = cbomRows.length
-    ? cbomRows.reduce((sum, row) => sum + Number(row.hndl_risk_score || 0), 0) /
-      cbomRows.length
+  const numericRiskValues = cbomRows
+    .map((row) => Number(row.hndl_risk_score))
+    .filter((value) => Number.isFinite(value));
+  const avgHndlRisk = numericRiskValues.length
+    ? numericRiskValues.reduce((sum, value) => sum + value, 0) /
+      numericRiskValues.length
     : 0;
+  const hasIncompleteRiskRows = cbomRows.some(
+    (row) =>
+      String(row.hndl_risk_status || "").toLowerCase() ===
+      "high risk (incomplete scan)",
+  );
   const executiveState = !cbomRows.length
     ? "hybrid"
-    : classicalOnlyCount > 0 || avgHndlRisk > 80
+    : classicalOnlyCount > 0 || hasIncompleteRiskRows || avgHndlRisk > 80
       ? "fail"
       : avgHndlRisk <= 60 && pqcCapableCount > 0
         ? "pass"
@@ -5048,6 +5709,8 @@ function CBOMTab({ scanModel = "general" }) {
       ? "PQC-capable posture observed with low average risk."
       : executiveState === "hybrid"
         ? "Transition posture detected: hardening required before pass-grade certification."
+        : hasIncompleteRiskRows
+          ? "Incomplete scan evidence exists; treat unresolved assets as high risk until handshake succeeds."
         : classicalOnlyCount > 0
           ? "Classical-only crypto posture remains present in observed assets."
           : "Average HNDL risk is above fail threshold.");
@@ -5265,13 +5928,18 @@ function CBOMTab({ scanModel = "general" }) {
                     row.crypto_posture_class || "",
                   ).toLowerCase();
                   const numericRisk = Number(row.hndl_risk_score);
+                  const incompleteRisk =
+                    String(row.hndl_risk_status || "").toLowerCase() ===
+                    "high risk (incomplete scan)";
                   const inferredState = Number.isFinite(numericRisk)
                     ? numericRisk <= 60
                       ? "pass"
                       : numericRisk <= 80
                         ? "hybrid"
                         : "fail"
-                    : "hybrid";
+                    : incompleteRisk
+                      ? "fail"
+                      : "hybrid";
                   const statusState =
                     explicitState ||
                     (postureClass === "classical-only"
@@ -8183,6 +8851,9 @@ function PQCLatencyTab({ scanModel = "general" }) {
   const [exportFeedback, setExportFeedback] = useState("");
   const [fleetExportProgressPct, setFleetExportProgressPct] = useState(0);
   const [fleetExportProgressLabel, setFleetExportProgressLabel] = useState("");
+  const [executiveComparisonRows, setExecutiveComparisonRows] = useState([]);
+  const [executiveComparisonLoading, setExecutiveComparisonLoading] = useState(false);
+  const [executiveComparisonError, setExecutiveComparisonError] = useState("");
 
   const MSS = 1460;
   const IW = 10;
@@ -8286,6 +8957,26 @@ function PQCLatencyTab({ scanModel = "general" }) {
     [scans],
   );
 
+  const executiveBankTargets = useMemo(() => {
+    const pickDomain = (matcher, fallback) =>
+      completedDomains.find((d) => matcher.test(d)) || fallback;
+
+    return [
+      {
+        label: "PNB",
+        domain: pickDomain(/(^|\.)pnb|pnbindia|pnb\.bank\.in/i, "pnbindia.in"),
+      },
+      {
+        label: "Axis",
+        domain: pickDomain(/axis/i, "axisbank.com"),
+      },
+      {
+        label: "HDFC",
+        domain: pickDomain(/hdfc/i, "hdfcbank.com"),
+      },
+    ];
+  }, [completedDomains]);
+
   const downloadTextFile = (filename, text, mime = "text/plain;charset=utf-8") => {
     const blob = new Blob([text], { type: mime });
     const url = URL.createObjectURL(blob);
@@ -8311,6 +9002,20 @@ function PQCLatencyTab({ scanModel = "general" }) {
       .split(/\r?\n/)
       .filter(Boolean);
 
+  const parseCsvObjects = (csvText) => {
+    const lines = parseCsvLines(csvText);
+    if (!lines.length) return [];
+    const headers = lines[0].split(",").map((h) => String(h || "").trim());
+    return lines.slice(1).map((line) => {
+      const cols = line.split(",");
+      const row = {};
+      headers.forEach((h, idx) => {
+        row[h] = String(cols[idx] || "").trim();
+      });
+      return row;
+    });
+  };
+
   const fetchFleetChunkCsv = async (
     domainsChunk,
     nextLossPct,
@@ -8331,6 +9036,72 @@ function PQCLatencyTab({ scanModel = "general" }) {
     }
     return parseCsvLines(await resp.text());
   };
+
+  const refreshExecutiveComparison = async () => {
+    const domains = executiveBankTargets
+      .map((x) => String(x.domain || "").trim().toLowerCase())
+      .filter(Boolean);
+    if (!domains.length) {
+      setExecutiveComparisonRows([]);
+      setExecutiveComparisonError("No domains available for comparison.");
+      return;
+    }
+
+    setExecutiveComparisonLoading(true);
+    setExecutiveComparisonError("");
+    try {
+      const resp = await fetch(`${API}/api/pqc/fleet-export.csv`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domains,
+          loss_rate: Number(lossPct) / 100,
+          profile: "hybrid",
+        }),
+      });
+      if (!resp.ok) {
+        const msg = await resp.text();
+        throw new Error(msg || `HTTP ${resp.status}`);
+      }
+
+      const rows = parseCsvObjects(await resp.text());
+      const byDomain = new Map(
+        rows.map((r) => [String(r.domain || "").trim().toLowerCase(), r]),
+      );
+
+      const comparison = executiveBankTargets.map((target) => {
+        const row = byDomain.get(String(target.domain || "").trim().toLowerCase()) || {};
+        const classic = Number(row.pass_ttfb_ms || 0);
+        const hybrid = Number(row.hybrid_ttfb_ms || 0);
+        const classicSafe = Number.isFinite(classic) ? classic : 0;
+        const hybridSafe = Number.isFinite(hybrid) ? hybrid : 0;
+        const degradation =
+          classicSafe > 0
+            ? ((hybridSafe - classicSafe) / classicSafe) * 100
+            : 0;
+        return {
+          domain: target.label,
+          sourceDomain: target.domain,
+          classicTtfb: Number(classicSafe.toFixed(2)),
+          hybridTtfb: Number(hybridSafe.toFixed(2)),
+          degradationPct: Number(degradation.toFixed(2)),
+        };
+      });
+
+      setExecutiveComparisonRows(comparison);
+    } catch (_err) {
+      setExecutiveComparisonRows([]);
+      setExecutiveComparisonError(
+        "Comparison chart unavailable right now. Run a live scan and retry.",
+      );
+    } finally {
+      setExecutiveComparisonLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshExecutiveComparison();
+  }, [completedDomains.join("|"), lossPct]);
 
   const exportFleetSimulationCsv = async () => {
     const domains = completedDomains;
@@ -9777,6 +10548,146 @@ function PQCLatencyTab({ scanModel = "general" }) {
         </div>
       </Card>
 
+      <Card style={{ padding: 18, display: "grid", gap: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <div style={{ fontFamily: "Orbitron", color: C.cyan, marginBottom: 4 }}>
+              <PressureText glow={C.cyan}>
+                EXECUTIVE COMPARISON: CLASSIC VS HYBRID TTFB
+              </PressureText>
+            </div>
+            <div
+              style={{ color: C.dim, fontFamily: "JetBrains Mono", fontSize: 11 }}
+            >
+              X-axis: Domain (PNB, Axis, HDFC) | Y-axis: TTFB (ms)
+            </div>
+          </div>
+          <Btn onClick={refreshExecutiveComparison} disabled={executiveComparisonLoading}>
+            {executiveComparisonLoading ? "REFRESHING..." : "REFRESH COMPARISON"}
+          </Btn>
+        </div>
+
+        {executiveComparisonError ? (
+          <div
+            style={{
+              border: `1px solid ${C.red}`,
+              background: "rgba(220,53,69,0.12)",
+              color: C.red,
+              borderRadius: 10,
+              padding: "10px 12px",
+              fontFamily: "JetBrains Mono",
+              fontSize: 11,
+            }}
+          >
+            {executiveComparisonError}
+          </div>
+        ) : null}
+
+        {HAS_RECHARTS && executiveComparisonRows.length ? (
+          <div
+            style={{
+              width: "100%",
+              height: 320,
+              border: `1px solid ${C.border}`,
+              borderRadius: 14,
+              padding: 10,
+              background:
+                "linear-gradient(165deg, rgba(244,232,209,0.34), rgba(214,230,215,0.3))",
+            }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={executiveComparisonRows}
+                margin={{ top: 14, right: 22, left: 8, bottom: 12 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={darkTheme ? "rgba(210,220,235,0.2)" : "rgba(110,130,160,0.24)"} />
+                <XAxis dataKey="domain" tick={{ fill: C.text, fontFamily: "JetBrains Mono", fontSize: 11 }} />
+                <YAxis tick={{ fill: C.dim, fontFamily: "JetBrains Mono", fontSize: 10 }} label={{ value: "TTFB (ms)", angle: -90, position: "insideLeft", fill: C.dim, fontFamily: "JetBrains Mono", fontSize: 10 }} />
+                <Tooltip
+                  formatter={(value, name, payload) => {
+                    const label =
+                      name === "classicTtfb"
+                        ? "Current (Classic)"
+                        : "Hybrid (PQC)";
+                    return [`${Number(value || 0).toFixed(2)} ms`, label];
+                  }}
+                  labelFormatter={(label, payload) => {
+                    const src = payload?.[0]?.payload?.sourceDomain || "";
+                    return `${label}${src ? ` (${src})` : ""}`;
+                  }}
+                />
+                <Bar dataKey="classicTtfb" name="classicTtfb" fill="#b88b33" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="hybridTtfb" name="hybridTtfb" fill="#2f7f58" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div
+            style={{
+              border: `1px solid ${C.border}`,
+              borderRadius: 12,
+              padding: 10,
+              fontFamily: "JetBrains Mono",
+              fontSize: 11,
+              color: C.dim,
+              display: "grid",
+              gap: 6,
+            }}
+          >
+            {executiveComparisonRows.length
+              ? executiveComparisonRows.map((row) => (
+                  <div
+                    key={`${row.domain}-${row.sourceDomain}`}
+                    style={{
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 10,
+                      padding: "8px 10px",
+                      background: "rgba(255,255,255,0.18)",
+                    }}
+                  >
+                    <strong>{row.domain}</strong> ({row.sourceDomain}) | Current: {row.classicTtfb.toFixed(2)} ms | Hybrid: {row.hybridTtfb.toFixed(2)} ms | Degradation: {row.degradationPct.toFixed(2)}%
+                  </div>
+                ))
+              : "No comparison data yet. Complete scans for bank domains and refresh."}
+          </div>
+        )}
+
+        {executiveComparisonRows.length ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 8,
+            }}
+          >
+            {executiveComparisonRows.map((row) => (
+              <div
+                key={`delta-${row.domain}`}
+                style={{
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 10,
+                  padding: "8px 10px",
+                  background: "rgba(132,170,208,0.1)",
+                  fontFamily: "JetBrains Mono",
+                  fontSize: 11,
+                  color: C.text,
+                }}
+              >
+                {row.domain}: +{row.degradationPct.toFixed(2)}% latency degradation
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </Card>
+
       <Card style={{ padding: 18 }}>
         <div
           style={{ color: C.cyan, fontFamily: "Orbitron", marginBottom: 10 }}
@@ -10116,6 +11027,7 @@ function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [tab, setTab] = useState("scanner");
   const [tabFxTick, setTabFxTick] = useState(0);
+  const [tabTransitionDirection, setTabTransitionDirection] = useState("right");
   const [scanModel, setScanModel] = useState("general");
   const [modeFxTick, setModeFxTick] = useState(0);
   const [modeFlash, setModeFlash] = useState(null);
@@ -10141,6 +11053,10 @@ function App() {
     window.matchMedia &&
     window.matchMedia("(pointer: coarse)").matches;
   const vpnOverlayActive = Boolean(networkStatus?.blocked);
+  const tabOrder = useMemo(
+    () => new Map(TABS.map(([id], idx) => [id, idx])),
+    [],
+  );
 
   const refreshNetworkStatus = () => {
     fetch(`${API}/api/network-status`)
@@ -10164,6 +11080,9 @@ function App() {
 
   const switchTab = (id) => {
     if (id === tab) return;
+    const nextIndex = tabOrder.get(id) ?? 0;
+    const currentIndex = tabOrder.get(tab) ?? 0;
+    setTabTransitionDirection(nextIndex >= currentIndex ? "right" : "left");
     setTab(id);
     setTabFxTick((v) => v + 1);
   };
@@ -10172,6 +11091,7 @@ function App() {
     setUnlocked(false);
     setTab("scanner");
     setTabFxTick(0);
+    setTabTransitionDirection("right");
     setScanModel("general");
     setModeFxTick(0);
     setModeFlash(null);
@@ -10183,6 +11103,18 @@ function App() {
     if (normalized === scanModel) return;
     setScanModel(normalized);
     setModeFxTick((v) => v + 1);
+    // Support 'auto' flash mode
+    if (options.autoScan) {
+      setModeFlash({
+        text:
+          options.message ||
+          (normalized === "banking"
+            ? "AUTO SWITCH: BANKING MATRIX ONLINE (STRICT PQC-S1 ENFORCEMENT)"
+            : "AUTO SWITCH: NON-BANK MATRIX ONLINE (ADAPTIVE PQC-M2 INTEL MODE)"),
+        tone: "auto",
+      });
+      return;
+    }
     const message =
       options.message ||
       (normalized === "banking"
@@ -10203,14 +11135,14 @@ function App() {
     });
     if (normalizedTarget === "banking") {
       switchScanModel("banking", {
-        tone: "banking",
-        message: `DOMAIN ${normalizeDomain(domain).toUpperCase()} IS OF BANK TYPE. SWITCHING TO BANKING MODE.`,
+        autoScan: true,
+        message: `AUTO SCAN: DOMAIN ${normalizeDomain(domain).toUpperCase()} IS OF BANK TYPE. SWITCHING TO BANKING MODE.`,
       });
       return;
     }
     switchScanModel("general", {
-      tone: "general",
-      message: `DOMAIN ${normalizeDomain(domain).toUpperCase()} IS NON-BANK TYPE. SWITCHING TO NON-BANK MODE.`,
+      autoScan: true,
+      message: `AUTO SCAN: DOMAIN ${normalizeDomain(domain).toUpperCase()} IS NON-BANK TYPE. SWITCHING TO NON-BANK MODE.`,
     });
   };
 
@@ -10962,12 +11894,21 @@ function App() {
                 border:
                   modeFlash.tone === "banking"
                     ? "1px solid rgba(218,186,117,0.64)"
-                    : "1px solid rgba(121,200,167,0.58)",
+                    : modeFlash.tone === "auto"
+                      ? "1px solid #7ecfff"
+                      : "1px solid rgba(121,200,167,0.58)",
                 background:
                   modeFlash.tone === "banking"
                     ? "linear-gradient(155deg, rgba(118,88,33,0.82), rgba(94,69,25,0.72))"
-                    : "linear-gradient(155deg, rgba(35,106,80,0.82), rgba(28,84,64,0.72))",
-                color: modeFlash.tone === "banking" ? "#ffefca" : "#d6f6e7",
+                    : modeFlash.tone === "auto"
+                      ? "linear-gradient(155deg, #b6eaff 60%, #7ecfff 100%)"
+                      : "linear-gradient(155deg, rgba(35,106,80,0.82), rgba(28,84,64,0.72))",
+                color:
+                  modeFlash.tone === "banking"
+                    ? "#ffefca"
+                    : modeFlash.tone === "auto"
+                      ? "#1a3a4d"
+                      : "#d6f6e7",
                 fontFamily: "JetBrains Mono",
                 fontSize: 10,
                 letterSpacing: 0.8,
@@ -10978,7 +11919,7 @@ function App() {
                 zIndex: 2,
               }}
             >
-              MODE SWITCH ACTIVE
+              {modeFlash.tone === "auto" ? "AUTO SCAN MODE SWITCHED" : "MODE SWITCH ACTIVE"}
             </div>
           )}
           <div
@@ -10991,9 +11932,14 @@ function App() {
             }}
           >
             <div
-              key={`${tab}-${scanModel}`}
+              className="qh-tab-content-shell"
+              key={`${tab}-${scanModel}-${tabFxTick}`}
               style={{
-                animation: "mainPanelIn 360ms cubic-bezier(0.22, 1, 0.36, 1)",
+                animation: `${
+                  tabTransitionDirection === "left"
+                    ? "qhPanelInLeft"
+                    : "qhPanelInRight"
+                } 360ms cubic-bezier(0.22, 1, 0.36, 1)`,
               }}
             >
               <TabContentErrorBoundary key={`tab-boundary-${tab}`}>

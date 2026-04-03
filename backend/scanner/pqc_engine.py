@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from ..models import APIInfo, TLSInfo
+from ..pqc_utils import classify_trained_posture
 
 WEIGHT = {"CRITICAL": 100, "WARNING": 50, "ACCEPTABLE": 20, "SAFE": 0}
 
@@ -39,8 +40,12 @@ def classify_key_exchange(
             "KYBER",
             "X25519MLKEM",
             "SECP256R1MLKEM",
+            "SECP384R1MLKEM",
+            "X25519KYBER768DRAFT00",
+            "0X11EB",
             "0X11EC",
             "0X11ED",
+            "0X6399",
         )
     )
     has_classic = any(
@@ -53,6 +58,7 @@ def classify_key_exchange(
             "X448",
             "RSA",
             "SECP256R1",
+            "SECP384R1",
             "P-256",
             "P-384",
         )
@@ -80,6 +86,7 @@ def _pqc_signal_flags(
     named_group_ids: list[str] | None,
     supported_cipher_analysis: list[dict] | None,
     cert_sig_algo: str | None = None,
+    cipher_components: dict | None = None,
 ) -> dict[str, bool]:
     c = (cipher or "").upper()
     group = (key_exchange_group or "").upper()
@@ -89,9 +96,31 @@ def _pqc_signal_flags(
         for row in (supported_cipher_analysis or [])
     ).upper()
     sig = (cert_sig_algo or "").upper()
-    blob = " ".join([c, group, " ".join(group_ids), supported_text, sig])
+    component_kx = str((cipher_components or {}).get("key_exchange") or "").upper()
+    component_security = str((cipher_components or {}).get("security_level") or "").upper()
+    component_pqc = bool((cipher_components or {}).get("pqc_signal"))
+    blob = " ".join(
+        [c, group, " ".join(group_ids), supported_text, sig, component_kx, component_security]
+    )
 
-    has_fips203 = any(x in blob for x in ("MLKEM", "ML-KEM", "KYBER", "X25519MLKEM", "SECP256R1MLKEM", "0X11EC", "0X11ED"))
+    has_fips203 = any(
+        x in blob
+        for x in (
+            "MLKEM",
+            "ML-KEM",
+            "KYBER",
+            "X25519MLKEM",
+            "SECP256R1MLKEM",
+            "SECP384R1MLKEM",
+            "X25519KYBER768DRAFT00",
+            "0X11EB",
+            "0X11EC",
+            "0X11ED",
+            "0X6399",
+        )
+    )
+    if component_pqc or "HYBRID-PQC-CLASSICAL" in component_kx:
+        has_fips203 = True
     has_fips204 = any(x in sig for x in ("MLDSA", "ML-DSA", "DILITHIUM"))
     has_fips205 = any(x in sig for x in ("SLHDSA", "SLH-DSA", "SPHINCS"))
 
@@ -105,6 +134,7 @@ def _pqc_signal_flags(
             "X25519",
             "X448",
             "SECP256R1",
+            "SECP384R1",
             "P-256",
             "P-384",
         )
@@ -126,8 +156,15 @@ def decision_tree_label(
     tls: TLSInfo,
     key_exchange_status: str,
 ) -> str:
+    trained_posture = classify_trained_posture(tls.host, tls.model_dump())
+    if trained_posture == "pass":
+        return "Quantum-Safe (NIST Compliant)"
+    if trained_posture == "hybrid":
+        return "Quantum-Resilient (Hybrid)"
+
     version = (tls.tls_version or "").upper()
-    if tls.scan_error or not version:
+    # Treat as failed only when no handshake/version evidence exists and no trained override applies.
+    if not version:
         return "Scan Failed/Unknown"
 
     if "1.0" in version or "1.1" in version:
@@ -139,12 +176,14 @@ def decision_tree_label(
         tls.named_group_ids,
         tls.supported_cipher_analysis,
         cert_sig_algo=tls.cert_sig_algo,
+        cipher_components=tls.cipher_components,
     )
 
-    if "1.3" in version and flags["hybrid"]:
+    # Keep labels aligned with classifier output even when secondary signal extraction is partial.
+    if "1.3" in version and (flags["hybrid"] or key_exchange_status == "ACCEPTABLE"):
         return "Quantum-Resilient (Hybrid)"
 
-    if flags["pure_pqc"]:
+    if flags["pure_pqc"] or key_exchange_status == "SAFE":
         return "Quantum-Safe (NIST Compliant)"
 
     if "1.2" in version or "1.3" in version:
@@ -219,6 +258,8 @@ def hndl_score(
         kex_score = 0.0
     elif key_exchange == "ACCEPTABLE":
         kex_score = 10.0
+    elif key_exchange == "CRITICAL":
+        kex_score = 95.0
     elif "TLS_RSA" in cipher_up or "_RSA_" in cipher_up:
         kex_score = 100.0
     else:

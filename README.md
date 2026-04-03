@@ -18,7 +18,6 @@ Open: `http://localhost:8000`
 This repo is configured for:
 
 - Backend deployment via generic deploy hook (GitHub Actions)
-- Frontend deployment on Vercel (GitHub Actions)
 
 ### Current Deployment Workflow
 
@@ -58,33 +57,6 @@ Backend DB URLs are configured from environment variables:
 - `BANKING_DATABASE_URL` (banking model, optional override)
 
 If not set, the app falls back to local SQLite files for both models.
-
-### Frontend (Vercel)
-
-Frontend workflow:
-
-- `.github/workflows/frontend-vercel.yml`
-
-Required GitHub secrets:
-
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
-
-Set them from your local machine after linking the Vercel project:
-
-```powershell
-vercel link frontend
-Get-Content frontend\.vercel\project.json
-# Copy orgId and projectId values, then set secrets:
-"<vercel-token>" | gh secret set VERCEL_TOKEN
-"<vercel-org-id>" | gh secret set VERCEL_ORG_ID
-"<vercel-project-id>" | gh secret set VERCEL_PROJECT_ID
-```
-
-Frontend API calls use `/api/*`, and `frontend/vercel.json` rewrites those requests to Railway backend:
-
-- `https://quanthunt-fullstack-production.up.railway.app/api/*`
 
 ## Deep Clean Smoke Test (One Command)
 

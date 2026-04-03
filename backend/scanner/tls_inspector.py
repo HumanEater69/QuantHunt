@@ -34,12 +34,27 @@ def _extract_group_signals(openssl_text: str) -> tuple[str | None, list[str]]:
             group_ids.append(upper)
 
     name_blob = text.upper()
-    if any(x in name_blob for x in ("X25519MLKEM768", "X25519_MLKEM768", "ML-KEM", "KYBER", "SECP256R1MLKEM768")):
+    if any(
+        x in name_blob
+        for x in (
+            "X25519MLKEM768",
+            "X25519_MLKEM768",
+            "ML-KEM",
+            "KYBER",
+            "SECP256R1MLKEM768",
+            "SECP384R1MLKEM1024",
+            "X25519KYBER768DRAFT00",
+        )
+    ):
         if not group_name:
             if "X25519MLKEM768" in name_blob or "X25519_MLKEM768" in name_blob:
                 group_name = "X25519MLKEM768"
             elif "SECP256R1MLKEM768" in name_blob:
                 group_name = "SECP256R1MLKEM768"
+            elif "SECP384R1MLKEM1024" in name_blob:
+                group_name = "SECP384R1MLKEM1024"
+            elif "X25519KYBER768DRAFT00" in name_blob:
+                group_name = "X25519KYBER768DRAFT00"
             elif "ML-KEM" in name_blob or "KYBER" in name_blob:
                 group_name = "ML-KEM"
 
@@ -173,8 +188,9 @@ def _probe_supported_tls13_ciphers(
 def _probe_hybrid_group_with_openssl(host: str, port: int, timeout: float) -> tuple[str | None, list[str]]:
     candidates = [
         ("X25519MLKEM768", "0X11EC"),
-        ("SECP256R1MLKEM768", "0X11ED"),
-        ("X25519KYBER768DRAFT00", "0X11EC"),
+        ("SECP256R1MLKEM768", "0X11EB"),
+        ("SECP384R1MLKEM1024", "0X11ED"),
+        ("X25519KYBER768DRAFT00", "0X6399"),
     ]
     for group_name, group_id in candidates:
         try:
@@ -208,7 +224,18 @@ def _probe_hybrid_group_with_openssl(host: str, port: int, timeout: float) -> tu
                 continue
             parsed_group, parsed_ids = _extract_group_signals(text)
             blob = upper
-            if any(x in blob for x in ("MLKEM", "ML-KEM", "KYBER", "X25519MLKEM", "SECP256R1MLKEM")):
+            if any(
+                x in blob
+                for x in (
+                    "MLKEM",
+                    "ML-KEM",
+                    "KYBER",
+                    "X25519MLKEM",
+                    "SECP256R1MLKEM",
+                    "SECP384R1MLKEM",
+                    "X25519KYBER768DRAFT00",
+                )
+            ):
                 ids = [group_id]
                 for pid in parsed_ids:
                     up = str(pid).upper()
@@ -355,7 +382,7 @@ def inspect_tls(host: str, port: int = 443, timeout: float | None = None) -> TLS
         except ValueError:
             timeout = 3.5
     info = TLSInfo(host=host, port=port)
-    enumerate_ciphers = os.getenv("SCAN_ENUMERATE_CIPHERS", "true").lower() == "true"
+    enumerate_ciphers = os.getenv("SCAN_ENUMERATE_CIPHERS", "false").lower() == "true"
     cipher_probe_max = max(4, int(os.getenv("SCAN_CIPHER_PROBE_MAX", "16")))
     probe_timeout = max(0.5, float(os.getenv("SCAN_CIPHER_PROBE_TIMEOUT_SEC", "1.3")))
     context = ssl.create_default_context()

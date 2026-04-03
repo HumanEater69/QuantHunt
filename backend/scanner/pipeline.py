@@ -103,18 +103,38 @@ async def run_scan_pipeline(scan_id: str, domain: str, scan_model: str = "genera
         probe_sec = 0.0
 
         deep_scan = _load_scan_deep_mode(scan_id, default=True)
-        max_assets = _int_env("SCAN_MAX_ASSETS_DEEP", 120) if deep_scan else _int_env("SCAN_MAX_ASSETS_SHALLOW", 40)
+        max_assets = _int_env("SCAN_MAX_ASSETS_DEEP", 24) if deep_scan else _int_env("SCAN_MAX_ASSETS_SHALLOW", 10)
         concurrency = _int_env("SCAN_CONCURRENCY_DEEP", 20) if deep_scan else _int_env("SCAN_CONCURRENCY_SHALLOW", 10)
-        asset_timeout_sec = _float_env("SCAN_ASSET_TIMEOUT_SEC", 12.0)
-        ai_timeout_sec = _float_env("SCAN_AI_TIMEOUT_SEC", 2.2)
+        asset_timeout_sec = _float_env("SCAN_ASSET_TIMEOUT_SEC", 4.5)
+        discovery_timeout_sec = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 12.0)
+        ai_timeout_sec = _float_env("SCAN_AI_TIMEOUT_SEC", 0.9)
         log_every = _int_env("SCAN_PROGRESS_LOG_EVERY", 10)
-        external_ai_budget = _int_env("SCAN_EXTERNAL_AI_BUDGET", 20)
+        external_ai_budget = _int_env("SCAN_EXTERNAL_AI_BUDGET", 8)
         has_external_ai = bool(os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
         ai_used = 0
 
         _db_log(scan_id, f"[DISCOVERY] Starting asset discovery for {domain}", 5, status="running")
         discovery_started = time.perf_counter()
-        discovered_assets, vpn_signals = await asyncio.to_thread(discover_assets_with_vpn_signals, domain)
+        try:
+            discovered_assets, vpn_signals = await asyncio.wait_for(
+                asyncio.to_thread(discover_assets_with_vpn_signals, domain, include_vpn_probes=deep_scan),
+                timeout=discovery_timeout_sec,
+            )
+        except asyncio.TimeoutError:
+            discovered_assets = [domain]
+            vpn_signals = {}
+            _db_log(
+                scan_id,
+                (
+                    "[DISCOVERY] Timeout reached; falling back to root domain only "
+                    f"after {discovery_timeout_sec:.1f}s"
+                ),
+                12,
+            )
+        except Exception as ex:
+            discovered_assets = [domain]
+            vpn_signals = {}
+            _db_log(scan_id, f"[DISCOVERY] Failed with {ex}; using root domain fallback", 12)
         discovery_sec = time.perf_counter() - discovery_started
         prioritized_assets = _prioritize_assets(domain, discovered_assets)
         assets = prioritized_assets[:max_assets]

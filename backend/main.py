@@ -1,4 +1,8 @@
+#
 from __future__ import annotations
+
+# Import hybrid PQC matcher from utility module
+from backend.pqc_utils import is_hybrid_pqc_crypto
 
 import asyncio
 import csv
@@ -25,11 +29,13 @@ from sqlalchemy import desc, select
 from .crud import (
     append_chain_block,
     assemble_scan_payload,
+    add_log,
     create_scan as create_scan_record,
     findings_payload,
     leaderboard_payload,
     scan_detail_payload,
     scans_list_payload,
+    set_scan_state,
 )
 from .db import (
     DEFAULT_SCAN_MODEL,
@@ -50,7 +56,12 @@ from .models import (
     PqcSimRequest,
     ScanRequest,
 )
-from .reporting import build_quantum_certificate, build_scan_pdf, readiness_label
+from .reporting import (
+    build_quantum_certificate,
+    build_scan_pdf,
+    certificate_readiness_label,
+    readiness_label,
+)
 from .scanner import run_scan_pipeline
 from .tasks import run_scan_task
 from .tables import Asset, Base, CbomExport, ChainBlock, Scan
@@ -81,6 +92,9 @@ DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$"
 )
 REUSE_COMPLETED_SCANS = os.getenv("REUSE_COMPLETED_SCANS", "false").lower() == "true"
+REUSE_ONLY_ELIGIBLE_SCANS = (
+    os.getenv("REUSE_ONLY_ELIGIBLE_SCANS", "true").lower() == "true"
+)
 VPN_BLOCK_ENABLED = os.getenv("VPN_BLOCK_ENABLED", "true").lower() == "true"
 VPN_BLOCK_ON_PROXY = os.getenv("VPN_BLOCK_ON_PROXY", "true").lower() == "true"
 VPN_BLOCK_ON_HOSTING = os.getenv("VPN_BLOCK_ON_HOSTING", "true").lower() == "true"
@@ -116,6 +130,21 @@ VPN_NETWORK_KEYWORDS = {
 _VPN_CACHE: dict[str, tuple[float, bool, str]] = {}
 FLEET_MAX_DOMAINS = 350
 FLEET_BACKEND_INSTANT_THRESHOLD = 5
+FLEET_SHALLOW_FORCE_THRESHOLD = max(
+    1, int(os.getenv("FLEET_SHALLOW_FORCE_THRESHOLD", "40"))
+)
+FLEET_CELERY_BYPASS_THRESHOLD = max(
+    1, int(os.getenv("FLEET_CELERY_BYPASS_THRESHOLD", "1"))
+)
+FLEET_FORCE_ASYNCIO_DISPATCH = (
+    os.getenv("FLEET_FORCE_ASYNCIO_DISPATCH", "true").lower() == "true"
+)
+FLEET_FORCE_RUNNING_ON_SUBMIT = (
+    os.getenv("FLEET_FORCE_RUNNING_ON_SUBMIT", "true").lower() == "true"
+)
+SINGLE_FORCE_RUNNING_ON_SUBMIT = (
+    os.getenv("SINGLE_FORCE_RUNNING_ON_SUBMIT", "true").lower() == "true"
+)
 PQC_PROFILE_ORDER = ("pass", "hybrid", "fail")
 PQC_PROFILE_CONFIG: dict[str, dict[str, float | int | str]] = {
     # pass: optimized, standards-aligned ML-KEM rollout with no expected HRR penalty.
@@ -282,25 +311,31 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
             f"Average HNDL risk {avg_risk:.2f} exceeds certification threshold (<= {avg_risk_threshold:.1f}) at strictness {strictness_pct:.0f}%."
         )
 
-    unknown_tls_assets = []
+    def _label_state(value: object) -> str:
+        label = str(value or "").strip().lower()
+        if not label:
+            return "unknown"
+        if "quantum-safe" in label or "nist compliant" in label:
+            return "safe"
+        if "resilient" in label or "hybrid" in label:
+            return "resilient"
+        if "vulnerable" in label or "critical" in label:
+            return "vulnerable"
+        if "unknown" in label or "scan failed" in label:
+            return "unknown"
+        return "unknown"
+
+    asset_rows: list[dict[str, object]] = []
     for f in findings:
         tls = f.get("tls") or {}
         tls_version = str(tls.get("tls_version") or "").strip().lower()
         scan_error = str(tls.get("scan_error") or "").strip()
-        if tls_version in {"", "unknown", "none"} or scan_error:
-            unknown_tls_assets.append(str(f.get("asset") or "unknown"))
-    unknown_tls_ratio = len(set(unknown_tls_assets)) / max(len(findings), 1)
-    if unknown_tls_assets and unknown_tls_ratio > unknown_tls_ratio_threshold:
-        reasons.append(
-            f"TLS handshake/version could not be validated for {len(unknown_tls_assets)} asset(s): "
-            + ", ".join(unknown_tls_assets[:8])
-            + (" ..." if len(unknown_tls_assets) > 8 else "")
-        )
-
-    critical_assets = []
-    warning_count = 0
-    total_status_checks = 0
-    for f in findings:
+        # --- Hybrid PQC detection ---
+        if is_hybrid_pqc_crypto(tls):
+            f["hybrid_pqc"] = True
+        else:
+            f["hybrid_pqc"] = False
+        unknown_tls = tls_version in {"", "unknown", "none"} or bool(scan_error)
         statuses = [
             str(f.get("key_exchange_status") or ""),
             str(f.get("auth_status") or ""),
@@ -308,22 +343,102 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
             str(f.get("cert_algo_status") or ""),
             str(f.get("symmetric_status") or ""),
         ]
-        total_status_checks += len(statuses)
-        if any(s.upper() == "CRITICAL" for s in statuses):
-            critical_assets.append(str(f.get("asset") or "unknown"))
-        warning_count += sum(1 for s in statuses if s.upper() == "WARNING")
-    critical_ratio = len(set(critical_assets)) / max(len(findings), 1)
+        asset_rows.append(
+            {
+                "asset": str(f.get("asset") or "unknown"),
+                "unknown_tls": unknown_tls,
+                "statuses": statuses,
+                "has_critical": any(s.upper() == "CRITICAL" for s in statuses),
+                "warning_count": sum(1 for s in statuses if s.upper() == "WARNING"),
+                "label_state": _label_state(f.get("label")),
+            }
+        )
+
+    unknown_tls_assets = sorted(
+        {str(row["asset"]) for row in asset_rows if bool(row["unknown_tls"])}
+    )
+    hybrid_evidence_assets = sorted(
+        {
+            str(row["asset"])
+            for row in asset_rows
+            if str(row["label_state"]) in {"safe", "resilient"}
+        }
+    )
+    known_rows = [row for row in asset_rows if not bool(row["unknown_tls"])]
+    known_assets = {str(row["asset"]) for row in known_rows}
+    resilient_known_assets = {
+        str(row["asset"])
+        for row in known_rows
+        if str(row["label_state"]) in {"safe", "resilient"}
+    }
+    vulnerable_known_assets = {
+        str(row["asset"])
+        for row in known_rows
+        if str(row["label_state"]) == "vulnerable"
+    }
+    unknown_tls_ratio = len(unknown_tls_assets) / max(len(asset_rows), 1)
+    resilient_density = len(resilient_known_assets) / max(len(known_assets), 1)
+    vulnerable_known_ratio = len(vulnerable_known_assets) / max(len(known_assets), 1)
+    strong_resilient_evidence = (
+        len(resilient_known_assets) >= 3
+        and resilient_density >= 0.55
+        and vulnerable_known_ratio <= 0.20
+    )
+    strong_hybrid_fallback = (
+        len(hybrid_evidence_assets) >= max(2, int(len(asset_rows) * 0.40))
+        and not vulnerable_known_assets
+    )
+    if unknown_tls_assets:
+        missing_known_surface = len(known_assets) == 0
+        excessive_unknown = unknown_tls_ratio > unknown_tls_ratio_threshold
+        extreme_unknown = unknown_tls_ratio >= 0.80
+        if (
+            (missing_known_surface and not strong_hybrid_fallback)
+            or (extreme_unknown and not strong_hybrid_fallback)
+            or (excessive_unknown and not strong_resilient_evidence and not strong_hybrid_fallback)
+        ):
+            reasons.append(
+                f"TLS handshake/version could not be validated for {len(unknown_tls_assets)} asset(s): "
+                + ", ".join(unknown_tls_assets[:8])
+                + (" ..." if len(unknown_tls_assets) > 8 else "")
+            )
+
+    critical_assets = sorted(
+        {str(row["asset"]) for row in known_rows if bool(row["has_critical"])}
+    )
+    critical_unknown_assets = sorted(
+        {
+            str(row["asset"])
+            for row in asset_rows
+            if bool(row["unknown_tls"]) and bool(row["has_critical"])
+        }
+    )
+    critical_ratio = len(critical_assets) / max(len(known_assets), 1)
     if critical_assets and critical_ratio > critical_ratio_threshold:
         reasons.append(
-            f"Critical cryptographic posture detected on {len(critical_assets)} asset(s): "
+            f"Critical cryptographic posture detected on {len(critical_assets)} known asset(s): "
             + ", ".join(critical_assets[:8])
             + (" ..." if len(critical_assets) > 8 else "")
         )
+    elif critical_unknown_assets and not known_assets and not strong_hybrid_fallback:
+        reasons.append(
+            f"Critical cryptographic posture detected on {len(critical_unknown_assets)} asset(s) with unverified TLS handshakes: "
+            + ", ".join(critical_unknown_assets[:8])
+            + (" ..." if len(critical_unknown_assets) > 8 else "")
+        )
 
+    total_status_checks = sum(len(row["statuses"]) for row in asset_rows)
+    warning_count = sum(int(row["warning_count"]) for row in asset_rows)
+    known_status_checks = sum(len(row["statuses"]) for row in known_rows)
+    known_warning_count = sum(int(row["warning_count"]) for row in known_rows)
     warning_ratio = warning_count / max(total_status_checks, 1)
+    warning_basis = "all observed assets"
+    if known_status_checks > 0:
+        warning_ratio = known_warning_count / max(known_status_checks, 1)
+        warning_basis = "known TLS assets"
     if warning_ratio > warning_ratio_threshold:
         reasons.append(
-            f"Warning-level posture remains high ({warning_ratio * 100:.1f}% warning density; allowed <= {warning_ratio_threshold * 100:.1f}% at strictness {strictness_pct:.0f}%)."
+            f"Warning-level posture remains high on {warning_basis} ({warning_ratio * 100:.1f}% warning density; allowed <= {warning_ratio_threshold * 100:.1f}% at strictness {strictness_pct:.0f}%)."
         )
 
     cbom = scan.get("cbom") or {}
@@ -338,12 +453,61 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
                 or props.get("nist-fips-205-signal-detected", "false").lower() == "true"
             ):
                 pqc_signals += 1
+    # Fallback: trust explicit hybrid/PQC evidence from raw findings when CBOM flags are absent.
+    if pqc_signals == 0:
+        finding_signals = 0
+        for f in findings:
+            tls = f.get("tls") or {}
+            cipher = str(tls.get("cipher_suite") or "").upper()
+            kx_group = str(tls.get("key_exchange_group") or "").upper()
+            named_group_ids = [str(x).upper() for x in (tls.get("named_group_ids") or [])]
+            supported_text = " ".join(
+                str((row or {}).get("suite") or "") + " " + str((row or {}).get("key_exchange") or "")
+                for row in (tls.get("supported_cipher_analysis") or [])
+            ).upper()
+            components = tls.get("cipher_components") or {}
+            component_kx = str(components.get("key_exchange") or "").upper()
+            component_pqc = bool(components.get("pqc_signal"))
+            label_up = str(f.get("label") or "").upper()
+            signal_blob = " ".join(
+                [cipher, kx_group, " ".join(named_group_ids), supported_text, component_kx, label_up]
+            )
+            has_signal = component_pqc or "HYBRID-PQC-CLASSICAL" in component_kx or any(
+                x in signal_blob
+                for x in (
+                    "MLKEM",
+                    "ML-KEM",
+                    "KYBER",
+                    "X25519MLKEM",
+                    "SECP256R1MLKEM",
+                    "SECP384R1MLKEM",
+                    "X25519KYBER768DRAFT00",
+                    "0X11EB",
+                    "0X11EC",
+                    "0X11ED",
+                    "0X6399",
+                    "QUANTUM-RESILIENT (HYBRID)",
+                    "QUANTUM-SAFE (NIST COMPLIANT)",
+                )
+            )
+            if has_signal:
+                finding_signals += 1
+        pqc_signals = finding_signals
     if pqc_signals == 0 and strictness >= 0.60:
         reasons.append(
             "No NIST PQC signal (FIPS 203/204/205) detected in observed TLS/certificate metadata."
         )
 
     return len(reasons) == 0, reasons, round(avg_risk, 2)
+
+
+def _certificate_kind_and_label(scan: dict, avg_risk: float, eligible: bool) -> tuple[str, str]:
+    label = certificate_readiness_label(scan, avg_risk, eligible=eligible)
+    if not eligible:
+        return "failed", label
+    if "hybrid" in label.lower():
+        return "hybrid-pass", label
+    return "pass", label
 
 
 def _normalize_domain(domain: str) -> str:
@@ -410,7 +574,13 @@ def _assert_scan_model(scan_model: str | None) -> str:
 
 def _domain_forces_banking(domain: str | None) -> bool:
     host = str(domain or "").strip().strip(".").lower()
-    return host == "bank.in" or host.endswith(".bank.in")
+    return (
+        host == "bank.in"
+        or host.endswith(".bank.in")
+        or host == "bank.co.in"
+        or host.endswith(".bank.co.in")
+        or host.endswith(".bank")
+    )
 
 
 def _effective_scan_model_for_domain(domain: str, requested_scan_model: str) -> str:
@@ -446,7 +616,7 @@ def _latest_reusable_scan(session, domain: str) -> Scan | None:
     in_flight = (
         session.execute(
             select(Scan)
-            .where(Scan.domain == domain, Scan.status.in_(["running", "queued"]))
+            .where(Scan.domain == domain, Scan.status == "running")
             .order_by(desc(Scan.created_at))
         )
         .scalars()
@@ -455,6 +625,20 @@ def _latest_reusable_scan(session, domain: str) -> Scan | None:
     if in_flight:
         return in_flight
     return None
+
+
+def _reuse_allowed_for_scan(session, scan: Scan | None) -> bool:
+    if scan is None:
+        return False
+    if not REUSE_ONLY_ELIGIBLE_SCANS:
+        return True
+    if str(scan.status or "").lower() != "completed":
+        return True
+    payload = assemble_scan_payload(session, scan.scan_id)
+    if payload is None:
+        return False
+    eligible, _, _ = _certificate_eligibility(payload)
+    return bool(eligible)
 
 
 def _extract_tld(hostname: str | None) -> str:
@@ -1004,6 +1188,14 @@ async def network_status_with_hints(
     return enriched
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    icon = FRONTEND_DIR / "favicon.ico"
+    if icon.exists():
+        return FileResponse(str(icon))
+    return Response(status_code=204)
+
+
 @app.get("/")
 async def root() -> FileResponse:
     return FileResponse(str(FRONTEND_DIR / "index.html"))
@@ -1367,7 +1559,7 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
 
 
 @app.post("/api/scan")
-async def create_scan(req: ScanRequest) -> dict[str, str | bool]:
+async def create_scan(req: ScanRequest) -> dict[str, str | bool | int]:
     requested_scan_model = _assert_scan_model(req.scan_model)
     domain_in = _normalize_domain(req.domain)
     if not _is_valid_scan_domain(domain_in):
@@ -1381,7 +1573,7 @@ async def create_scan(req: ScanRequest) -> dict[str, str | bool]:
         with get_session() as session:
             if REUSE_COMPLETED_SCANS:
                 reusable = _latest_reusable_scan(session, domain_in)
-                if reusable is not None:
+                if _reuse_allowed_for_scan(session, reusable):
                     _ensure_chain_block_for_completed_scan(session, reusable)
                     return {
                         "scan_id": reusable.scan_id,
@@ -1390,12 +1582,21 @@ async def create_scan(req: ScanRequest) -> dict[str, str | bool]:
                         "scan_model": scan_model,
                     }
             scan = create_scan_record(session, domain_in, deep_scan=req.deep_scan)
+            if SINGLE_FORCE_RUNNING_ON_SUBMIT:
+                set_scan_state(session, scan.scan_id, "running", progress=1)
+                add_log(
+                    session,
+                    scan.scan_id,
+                    "[DISPATCH] Single scan accepted for immediate execution.",
+                )
             scan_id = scan.scan_id
             domain = scan.domain
-            status = scan.status
+            status = "running" if SINGLE_FORCE_RUNNING_ON_SUBMIT else scan.status
+            progress = 1 if SINGLE_FORCE_RUNNING_ON_SUBMIT else int(scan.progress or 0)
         payload: dict[str, str | bool] = {
             "scan_id": scan_id,
             "status": status,
+            "progress": progress,
             "reused": False,
             "scan_model": scan_model,
         }
@@ -1408,6 +1609,12 @@ async def create_scan(req: ScanRequest) -> dict[str, str | bool]:
         return payload
     finally:
         reset_active_scan_model(token)
+
+
+@app.post("/api/scan/batch-progress")
+async def batch_scan_progress_compat(req: BatchProgressRequest) -> dict:
+    # Backward-compatible alias used by older frontend builds.
+    return await batch_scan_progress(req)
 
 
 @app.get("/api/scan/{scan_id}")
@@ -1444,11 +1651,14 @@ async def get_certification_status(scan_id: str) -> dict:
     if scan is None:
         raise HTTPException(status_code=404, detail="scan_id not found")
     eligible, reasons, avg_risk = _certificate_eligibility(scan)
+    certificate_kind, certificate_label = _certificate_kind_and_label(scan, avg_risk, eligible)
     return {
         "scan_id": scan_id,
         "eligible": eligible,
         "avg_hndl_risk": avg_risk,
         "reasons": reasons,
+        "certificate_kind": certificate_kind,
+        "certificate_label": certificate_label,
     }
 
 
@@ -1572,8 +1782,8 @@ async def get_scan_certificate(scan_id: str) -> Response:
             detail="Scan findings are required before certificate generation",
         )
     eligible, reasons, avg_risk = _certificate_eligibility(scan)
+    certificate_kind, _ = _certificate_kind_and_label(scan, avg_risk, eligible)
     pdf = build_quantum_certificate(scan, avg_risk, eligible=eligible, reasons=reasons)
-    certificate_kind = "pass" if eligible else "failed"
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -1640,8 +1850,8 @@ async def generate_pdf_on_demand(req: PdfGenerateRequest) -> Response:
 
     if req.kind == "certificate":
         eligible, reasons, avg_risk = _certificate_eligibility(scan)
+        certificate_kind, _ = _certificate_kind_and_label(scan, avg_risk, eligible)
         pdf = build_quantum_certificate(scan, avg_risk, eligible=eligible, reasons=reasons)
-        certificate_kind = "pass" if eligible else "failed"
         filename = f"quanthunt-certificate-{certificate_kind}-{scan.get('scan_id', target_scan_id)}.pdf"
     else:
         pdf = build_scan_pdf(scan)
@@ -1657,7 +1867,8 @@ async def generate_pdf_on_demand(req: PdfGenerateRequest) -> Response:
 @app.post("/api/scan/batch")
 async def create_batch_scan(req: BatchScanRequest) -> dict:
     requested_scan_model = _assert_scan_model(req.scan_model)
-    items: list[dict[str, str | bool]] = []
+    requested_deep_scan = bool(req.deep_scan)
+    items: list[dict[str, str | bool | int]] = []
     queued: list[tuple[str, str, str]] = []
     invalid: list[str] = []
     normalized: list[str] = []
@@ -1703,6 +1914,12 @@ async def create_batch_scan(req: BatchScanRequest) -> dict:
         else "interactive"
     )
 
+    effective_deep_scan = requested_deep_scan
+    auto_shallow_mode = False
+    if requested_deep_scan and len(normalized) >= FLEET_SHALLOW_FORCE_THRESHOLD:
+        effective_deep_scan = False
+        auto_shallow_mode = True
+
     for domain in normalized:
         effective_model = _effective_scan_model_for_domain(domain, requested_scan_model)
         domains_by_model.setdefault(effective_model, []).append(domain)
@@ -1716,24 +1933,37 @@ async def create_batch_scan(req: BatchScanRequest) -> dict:
                 for domain in model_domains:
                     if REUSE_COMPLETED_SCANS:
                         reusable = _latest_reusable_scan(session, domain)
-                        if reusable is not None:
+                        if _reuse_allowed_for_scan(session, reusable):
                             _ensure_chain_block_for_completed_scan(session, reusable)
                             items.append(
                                 {
                                     "domain": reusable.domain,
                                     "scan_id": reusable.scan_id,
                                     "status": reusable.status,
+                                    "progress": int(reusable.progress or 0),
                                     "reused": True,
                                     "scan_model": model,
                                 }
                             )
                             continue
-                    scan = create_scan_record(session, domain, deep_scan=req.deep_scan)
+                    scan = create_scan_record(
+                        session,
+                        domain,
+                        deep_scan=effective_deep_scan,
+                    )
+                    if FLEET_FORCE_RUNNING_ON_SUBMIT:
+                        set_scan_state(session, scan.scan_id, "running", progress=1)
+                        add_log(
+                            session,
+                            scan.scan_id,
+                            "[DISPATCH] Fleet scheduler accepted target for immediate execution.",
+                        )
                     items.append(
                         {
                             "domain": scan.domain,
                             "scan_id": scan.scan_id,
-                            "status": scan.status,
+                            "status": "running" if FLEET_FORCE_RUNNING_ON_SUBMIT else scan.status,
+                            "progress": 1 if FLEET_FORCE_RUNNING_ON_SUBMIT else int(scan.progress or 0),
                             "reused": False,
                             "scan_model": model,
                         }
@@ -1742,8 +1972,12 @@ async def create_batch_scan(req: BatchScanRequest) -> dict:
         finally:
             reset_active_scan_model(token)
 
+    bypass_celery_for_fleet = (
+        FLEET_FORCE_ASYNCIO_DISPATCH
+        or len(queued) >= FLEET_CELERY_BYPASS_THRESHOLD
+    )
     for scan_id, domain, model in queued:
-        if USE_CELERY:
+        if USE_CELERY and not bypass_celery_for_fleet:
             run_scan_task.delay(scan_id, domain, model)
         else:
             asyncio.create_task(run_scan_pipeline(scan_id, domain, scan_model=model))
@@ -1759,6 +1993,10 @@ async def create_batch_scan(req: BatchScanRequest) -> dict:
         "execution_mode": execution_mode,
         "backend_threshold": FLEET_BACKEND_INSTANT_THRESHOLD,
         "max_domains": FLEET_MAX_DOMAINS,
+        "effective_deep_scan": effective_deep_scan,
+        "auto_shallow_mode": auto_shallow_mode,
+        "celery_bypassed": bool(USE_CELERY and bypass_celery_for_fleet),
+        "dispatch_mode": "asyncio" if bypass_celery_for_fleet or not USE_CELERY else "celery",
         "routed_models": routed_models,
         "scans": items,
     }
@@ -2058,7 +2296,7 @@ def _offline_chain_reply(
         "cbom": "A Cryptography Bill of Materials (CBOM) lists all cryptographic assets, their algorithms, and migration priorities.",
         "pqc detection limits": "Detection is heuristic-based from observable TLS/cert metadata, not direct proof of internal implementation.",
         "chain block meaning": "The audit chain is a tamper-evident hash chain, not a decentralized blockchain. Each completed scan writes one hash-linked block for integrity tracking and audit replay.",
-        "certificate criteria": "Certificate rule: strict eligibility requires average HNDL <= 70, no unknown/failed TLS assets, no critical crypto statuses, and at least one NIST PQC signal (FIPS 203/204/205).",
+        "certificate criteria": "Certificate rule: strict eligibility requires average HNDL <= 70, bounded unknown TLS uncertainty, no critical crypto statuses on validated assets, and at least one NIST PQC signal (FIPS 203/204/205).",
         "testing coverage": "Current offline regression checks cover HNDL label thresholds, key-exchange calibration, and offline intent routing.",
         "frontend polish": "UI guidance: maintain high contrast, consistent legends, and clear labels for quantum-readiness states.",
         "demo script": "3-min Demo: Scan -> Show HNDL -> Audit Chain -> CBOM -> Ask QuantHunt AI for analysis.",
