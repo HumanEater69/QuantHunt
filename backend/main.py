@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, text
 
 from .crud import (
     append_chain_block,
@@ -1739,9 +1739,9 @@ def startup() -> None:
         # Enable WAL mode for SQLite to improve concurrent access
         if db_engine.url.drivername == "sqlite":
             with db_engine.connect() as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA synchronous=NORMAL")
-                conn.execute("PRAGMA cache_size=-64000")
+                conn.execute(text("PRAGMA journal_mode=WAL"))
+                conn.execute(text("PRAGMA synchronous=NORMAL"))
+                conn.execute(text("PRAGMA cache_size=-64000"))
                 conn.commit()
         
         token = set_active_scan_model(model)
