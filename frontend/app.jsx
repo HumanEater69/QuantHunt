@@ -165,6 +165,7 @@ const getPersonalizationUserId = () => {
   }
 };
 const resolveApiBase = () => {
+  const isHostedVercel = window.location.hostname.includes("vercel.app");
   try {
     const queryApi = sanitizeApiBase(
       new URLSearchParams(window.location.search).get("api"),
@@ -176,6 +177,13 @@ const resolveApiBase = () => {
   } catch {
     // Ignore storage/query failures and fall back to default local behavior.
   }
+  if (isHostedVercel) {
+    try {
+      window.localStorage.removeItem("qh_api_base");
+    } catch {
+      // Ignore storage failures and continue with same-origin fallback.
+    }
+  }
   if (window.location.protocol === "file:") return "http://127.0.0.1:8000";
   if (LOCAL_HOSTS.has(window.location.hostname)) {
     return window.location.port === "8000"
@@ -186,7 +194,7 @@ const resolveApiBase = () => {
     window.QUANTHUNT_CONFIG && window.QUANTHUNT_CONFIG.API_BASE,
   );
   if (isAbsoluteHttpApi(configuredApi)) return configuredApi;
-  if (window.location.hostname.includes("vercel.app")) {
+  if (isHostedVercel) {
     return "";
   }
   try {
