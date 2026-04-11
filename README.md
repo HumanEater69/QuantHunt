@@ -1,4 +1,4 @@
-# QuantumShield 🛡️
+# QuantHunt🛡️
 
 **Post-Quantum Cryptography (PQC) Posture Assessment Platform**
 
@@ -8,7 +8,7 @@ A production-grade FastAPI + React dashboard for enterprise-scale cryptographic 
 
 ## 📋 Overview
 
-QuantumShield is a comprehensive security platform designed to assess organizational readiness for quantum-safe cryptography adoption. It combines deep asset discovery, TLS inspection, and AI-driven recommendations to identify cryptographic vulnerabilities and provide actionable remediation pathways.
+QuantHunt is a comprehensive security platform designed to assess organizational readiness for quantum-safe cryptography adoption. It combines deep asset discovery, TLS inspection, and AI-driven recommendations to identify cryptographic vulnerabilities and provide actionable remediation pathways.
 
 ### 🎯 Core Capabilities
 
@@ -65,8 +65,8 @@ QuantumShield is a comprehensive security platform designed to assess organizati
 
 ```bash
 # Clone and setup
-git clone https://github.com/your-org/quantumshield.git
-cd quantumshield
+git clone https://github.com/your-org/quanthunt.git
+cd quanthunt
 
 # Create virtual environment
 python -m venv .venv
@@ -93,7 +93,7 @@ INFO:     Application startup complete
 ```dockerfile
 # See included Dockerfile for containerized deployment
 docker build -t quantumshield:latest .
-docker run -p 8000:8000 -e DATABASE_URL="postgresql://..." quantumshield:latest
+docker run -p 8000:8000 -e DATABASE_URL="postgresql://..." quanthunt:latest
 ```
 
 ---
