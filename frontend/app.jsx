@@ -3297,6 +3297,37 @@ function ScannerTab({
     return counts;
   }, [scanData?.assets]);
 
+  useEffect(() => {
+    let alive = true;
+    if (scanId || polling || scanData?.scan?.scan_id) return () => {};
+
+    (async () => {
+      try {
+        const resp = await fetch(`${API}/api/scans?${scanModelParam(scanModel)}`);
+        if (!resp.ok) return;
+        const rows = await resp.json();
+        const completed = uniqueCompletedScansByDomain(
+          filterRowsByMode(rows, scanModel),
+        );
+        const latest = completed[0];
+        if (!alive || !latest?.scan_id) return;
+        const detail = await loadScanDetail(latest.scan_id);
+        if (!alive || !detail?.scan) return;
+        setFlashMessage({
+          type: "success",
+          durationMs: 4200,
+          text: `RESTORED LATEST COMPLETED SCAN: ${detail.scan.domain}`,
+        });
+      } catch {
+        // Keep the scanner usable even if the restore fetch fails.
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [scanModel, scanId, polling, scanData?.scan?.scan_id]);
+
   const computeHndlBreakdown = (list) => {
     const cat = {
       key_exchange: { score: 0, count: 0 },
