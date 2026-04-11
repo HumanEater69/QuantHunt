@@ -12395,7 +12395,6 @@ function App() {
           >
             <div
               className="qh-tab-content-shell"
-              key={`${tab}-${scanModel}-${tabFxTick}`}
               style={{
                 animation: `${
                   tabTransitionDirection === "left"
@@ -12404,17 +12403,17 @@ function App() {
                 } 360ms cubic-bezier(0.22, 1, 0.36, 1)`,
               }}
             >
-              <TabContentErrorBoundary key={`tab-boundary-${tab}`}>
+              <TabContentErrorBoundary>
                 {tab === "scanner" && <OpsStrip />}
                 {tab === "scanner" && <CyberIntelPanel scanModel={scanModel} />}
-                {tab === "scanner" && (
+                <div style={{ display: tab === "scanner" ? "block" : "none" }}>
                   <ScannerTab
                     scanModel={scanModel}
                     onAutoSwitchForDomain={handleAutoSwitchForDomain}
                     pendingAutoScan={pendingAutoScan}
                     onAutoScanConsumed={consumePendingAutoScan}
                   />
-                )}
+                </div>
                 {tab === "banklab" && (
                   <BankSignalLabTab scanModel={scanModel} />
                 )}
