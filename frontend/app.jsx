@@ -5386,6 +5386,15 @@ function AssetMapTab({ scanModel = "general" }) {
     const d = await r.json();
     setAssets(d.assets || []);
   };
+  useEffect(() => {
+    if (!scans.length) return;
+    const selectedStillAvailable = selected
+      ? scans.some((s) => String(s.scan_id) === String(selected))
+      : false;
+    if (!selected || !selectedStillAvailable) {
+      load(scans[0]);
+    }
+  }, [scans, selected]);
   const vpnSignalTags = (signals) => {
     const tags = [];
     if (signals?.udp_500) tags.push("UDP/500");
