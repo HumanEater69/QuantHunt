@@ -25,11 +25,42 @@ DNS_QUERY_TIMEOUT_SEC = 2.2
 CRTSH_TIMEOUT_SEC = 10.0
 CRTSH_RETRY_TIMEOUTS_SEC: tuple[float, ...] = (6.0, 10.0, 14.0)
 CRTSH_MAX_TOTAL_SEC = 28.0
-MAX_BRUTEFORCE_WORDS = 2500
 HISTORY_TOKEN_LIMIT = 4000
 MULTI_RESOLVER_NSLOOKUP_TIMEOUT_SEC = 2.8
 AUTHORITATIVE_NS_MAX = 8
 MULTI_VANTAGE_TIMEOUT_SEC = 12.0
+
+
+def _railway_hosted_mode() -> bool:
+    return any(
+        os.getenv(name)
+        for name in (
+            "RAILWAY_ENVIRONMENT",
+            "RAILWAY_PROJECT_ID",
+            "RAILWAY_SERVICE_ID",
+            "RAILWAY_PUBLIC_DOMAIN",
+            "RAILWAY_STATIC_URL",
+        )
+    )
+
+
+MAX_BRUTEFORCE_WORDS = 5000 if _railway_hosted_mode() else 2500
+
+
+def _railway_hosted_mode() -> bool:
+    return any(
+        os.getenv(name)
+        for name in (
+            "RAILWAY_ENVIRONMENT",
+            "RAILWAY_PROJECT_ID",
+            "RAILWAY_SERVICE_ID",
+            "RAILWAY_PUBLIC_DOMAIN",
+            "RAILWAY_STATIC_URL",
+        )
+    )
+
+
+MAX_BRUTEFORCE_WORDS = 5000 if _railway_hosted_mode() else 2500
 
 # Preserve legacy target-specific coverage when historical wordlists were saved
 # under an older hostname spelling.
@@ -944,9 +975,19 @@ async def discover_assets_async(
     history_tokens = _load_historical_inventory_tokens(domain_l)
     explicit_words = set(wordlist or [])
 
-    wave_1_limit = max(160, int(os.getenv("SCAN_DNS_WAVE1_WORD_LIMIT", "260")))
-    wave_2_limit = max(140, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "220")))
-    wave_3_limit = max(120, int(os.getenv("SCAN_DNS_WAVE3_WORD_LIMIT", "180")))
+    if _railway_hosted_mode():
+        wave_1_limit = max(320, int(os.getenv("SCAN_DNS_WAVE1_WORD_LIMIT", "900")))
+        wave_2_limit = max(260, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "700")))
+        wave_3_limit = max(220, int(os.getenv("SCAN_DNS_WAVE3_WORD_LIMIT", "500")))
+    else:
+        if _railway_hosted_mode():
+            wave_1_limit = max(320, int(os.getenv("SCAN_DNS_WAVE1_WORD_LIMIT", "900")))
+            wave_2_limit = max(260, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "700")))
+            wave_3_limit = max(220, int(os.getenv("SCAN_DNS_WAVE3_WORD_LIMIT", "500")))
+        else:
+            wave_1_limit = max(160, int(os.getenv("SCAN_DNS_WAVE1_WORD_LIMIT", "260")))
+            wave_2_limit = max(140, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "220")))
+            wave_3_limit = max(120, int(os.getenv("SCAN_DNS_WAVE3_WORD_LIMIT", "180")))
 
     initial_words = _rank_words(
         _expand_seed_words({*explicit_words, *ct_seed_words, *history_tokens, *get_bootstrap_dns_tokens()}),

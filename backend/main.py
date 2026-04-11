@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, text
 
 from .crud import (
     append_chain_block,
@@ -59,6 +59,7 @@ from .models import (
     PqcSimRequest,
     ScanRequest,
 )
+from .mongo_store import mongo_status
 from .reporting import (
     build_quantum_certificate,
     build_scan_pdf,
@@ -79,7 +80,9 @@ def _cors_origins_from_env() -> list[str]:
     if raw == "*" and allow_insecure:
         return ["*"]
     origins = [o.strip() for o in raw.split(",") if o.strip() and o.strip() != "*"]
-    return origins or default_origins
+    result = origins or default_origins
+    print(f"[CORS] Configured origins: {result}")
+    return result
 
 
 app = FastAPI(title="QUANTHUNT API", version="1.0.0")
@@ -89,6 +92,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _railway_hosted_mode() -> bool:
+    return any(
+        os.getenv(name)
+        for name in (
+            "RAILWAY_ENVIRONMENT",
+            "RAILWAY_PROJECT_ID",
+            "RAILWAY_SERVICE_ID",
+            "RAILWAY_PUBLIC_DOMAIN",
+            "RAILWAY_STATIC_URL",
+        )
+    )
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
@@ -1734,6 +1750,15 @@ async def scan_coverage_audit_expected_json(
 def startup() -> None:
     for model, db_engine in get_all_engines().items():
         Base.metadata.create_all(bind=db_engine)
+        
+        # Enable WAL mode for SQLite to improve concurrent access
+        if db_engine.url.drivername == "sqlite":
+            with db_engine.connect() as conn:
+                conn.execute(text("PRAGMA journal_mode=WAL"))
+                conn.execute(text("PRAGMA synchronous=NORMAL"))
+                conn.execute(text("PRAGMA cache_size=-64000"))
+                conn.commit()
+        
         token = set_active_scan_model(model)
         try:
             bootstrap_historical_dns_cache()
@@ -1862,6 +1887,14 @@ async def network_status(request: Request) -> dict[str, object]:
     )
     enriched["message"] = message
     return enriched
+
+
+@app.get("/api/persistence-status")
+async def persistence_status() -> dict[str, object]:
+    status = mongo_status()
+    status["default_store"] = "sqlite"
+    status["mongo_mode"] = "mirror"
+    return status
 
 
 @app.post("/api/network-status")
@@ -2327,6 +2360,7 @@ async def create_scan(req: ScanRequest) -> dict[str, str | bool | int]:
     scan_model = _effective_scan_model_for_domain(domain_in, requested_scan_model)
     token = set_active_scan_model(scan_model)
     try:
+        effective_deep_scan = bool(req.deep_scan) or _railway_hosted_mode()
         with get_session() as session:
             if REUSE_COMPLETED_SCANS:
                 reusable = _latest_reusable_scan(session, domain_in)
@@ -2338,7 +2372,7 @@ async def create_scan(req: ScanRequest) -> dict[str, str | bool | int]:
                         "reused": True,
                         "scan_model": scan_model,
                     }
-            scan = create_scan_record(session, domain_in, deep_scan=req.deep_scan)
+            scan = create_scan_record(session, domain_in, deep_scan=effective_deep_scan)
             if SINGLE_FORCE_RUNNING_ON_SUBMIT:
                 set_scan_state(session, scan.scan_id, "running", progress=1)
                 add_log(
@@ -2652,6 +2686,7 @@ async def generate_pdf_on_demand(req: PdfGenerateRequest) -> Response:
 async def create_batch_scan(req: BatchScanRequest) -> dict:
     requested_scan_model = _assert_scan_model(req.scan_model)
     requested_deep_scan = bool(req.deep_scan)
+    effective_deep_scan = requested_deep_scan or _railway_hosted_mode()
     items: list[dict[str, str | bool | int]] = []
     queued: list[tuple[str, str, str]] = []
     invalid: list[str] = []
@@ -2698,9 +2733,8 @@ async def create_batch_scan(req: BatchScanRequest) -> dict:
         else "interactive"
     )
 
-    effective_deep_scan = requested_deep_scan
     auto_shallow_mode = False
-    if requested_deep_scan and len(normalized) >= FLEET_SHALLOW_FORCE_THRESHOLD:
+    if not _railway_hosted_mode() and requested_deep_scan and len(normalized) >= FLEET_SHALLOW_FORCE_THRESHOLD:
         effective_deep_scan = False
         auto_shallow_mode = True
 

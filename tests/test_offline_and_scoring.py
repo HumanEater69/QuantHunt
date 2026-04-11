@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +11,7 @@ from backend.main import (
     _effective_scan_model_for_domain,
     _extract_tld,
     _offline_chain_reply,
+    _railway_hosted_mode,
     _vpn_block_reasons,
     _vpn_signal_score,
 )
@@ -760,6 +762,22 @@ class FleetRouteCompatibilityTests(unittest.TestCase):
         self.assertEqual(legacy.json(), canonical.json())
         self.assertEqual(legacy.json()["total"], 1)
         self.assertEqual(legacy.json()["scans"][0]["status"], "queued")
+
+
+class RailwayHostedModeTests(unittest.TestCase):
+    def test_railway_mode_detects_hosted_env(self) -> None:
+        names = [
+            "RAILWAY_ENVIRONMENT",
+            "RAILWAY_PROJECT_ID",
+            "RAILWAY_SERVICE_ID",
+            "RAILWAY_PUBLIC_DOMAIN",
+            "RAILWAY_STATIC_URL",
+        ]
+        with mock.patch.dict(os.environ, {name: "" for name in names}, clear=False):
+            self.assertFalse(_railway_hosted_mode())
+
+        with mock.patch.dict(os.environ, {"RAILWAY_PROJECT_ID": "proj-123"}, clear=False):
+            self.assertTrue(_railway_hosted_mode())
 
 if __name__ == "__main__":
     unittest.main()
