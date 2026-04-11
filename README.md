@@ -86,7 +86,33 @@ Backend DB URLs are configured from environment variables:
 - `DATABASE_URL` (general model)
 - `BANKING_DATABASE_URL` (banking model, optional override)
 
+MongoDB mirror (optional, recommended for cloud backup/history):
+
+- `MONGODB_URI` (Atlas/cluster connection string)
+- `MONGODB_DB` (default: `quanthunt`)
+- `MONGODB_COLLECTION` (default: `scan_snapshots`)
+
+When MongoDB is enabled, completed scans are mirrored into Mongo while SQLite remains the primary runtime store.
+Check status at:
+
+- `GET /api/persistence-status`
+
 If not set, the app falls back to local SQLite files for both models.
+
+## Frontend to Hosted Backend (Vercel)
+
+The frontend supports runtime API base configuration via `frontend/config.js`:
+
+```js
+window.QUANTHUNT_CONFIG = Object.freeze({ API_BASE: "https://<your-backend-origin>" });
+```
+
+For your Vercel frontend (`https://quanthunt-seven.vercel.app/`), set `API_BASE` to the deployed backend origin.
+
+Notes:
+
+- Keep backend CORS strict using `CORS_ALLOW_ORIGINS`, including your Vercel origin.
+- If `API_BASE` is empty, frontend falls back to same-origin/local behavior.
 
 ## Deep Clean Smoke Test (One Command)
 

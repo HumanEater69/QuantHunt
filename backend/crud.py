@@ -458,6 +458,41 @@ def scan_detail_payload(session: Session, scan_id: str) -> dict | None:
 
     assets_payload = sorted(assets_payload, key=_display_rank)
 
+    total_assets = len(assets_payload)
+    tls_unknown_count = 0
+    dns_resolution_unknown = 0
+    live_only_unknown = 0
+    for row in assets_payload:
+        try:
+            meta = json.loads(str(row.get("metadata_json") or "{}"))
+        except Exception:
+            meta = {}
+        measured = bool(meta.get("tls_measured")) or bool(str(row.get("tls_version") or "").strip() or str(row.get("cipher_suite") or "").strip())
+        if measured:
+            continue
+        tls_unknown_count += 1
+        reason = str(meta.get("tls_unknown_reason") or "none").strip().lower()
+        if reason == "dns_resolution":
+            dns_resolution_unknown += 1
+        else:
+            live_only_unknown += 1
+
+    def _pct(numer: int, denom: int) -> float:
+        if denom <= 0:
+            return 0.0
+        return round((float(numer) / float(denom)) * 100.0, 2)
+
+    report_buckets = {
+        **report_buckets,
+        "asset_total": total_assets,
+        "live_tls_unknown": tls_unknown_count,
+        "live_tls_unknown_rate": _pct(tls_unknown_count, total_assets),
+        "live_tls_unknown_live_only": live_only_unknown,
+        "live_tls_unknown_live_only_rate": _pct(live_only_unknown, max(total_assets - dns_resolution_unknown, 1)),
+        "dns_resolution_unknown": dns_resolution_unknown,
+        "dns_resolution_unknown_rate": _pct(dns_resolution_unknown, total_assets),
+    }
+
     return {
         "scan": {
             "scan_id": scan.scan_id,

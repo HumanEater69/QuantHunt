@@ -793,57 +793,45 @@ async def discover_from_crtsh(domain: str, timeout: float = CRTSH_TIMEOUT_SEC) -
     for attempt, req_timeout in enumerate(attempt_timeouts, start=1):
         if (asyncio.get_running_loop().time() - started) > CRTSH_MAX_TOTAL_SEC:
             break
-        for url in json_urls:
-            if (asyncio.get_running_loop().time() - started) > CRTSH_MAX_TOTAL_SEC:
-                break
-            raw = ""
-            try:
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(req_timeout, connect=min(req_timeout, 5.0)),
-                    follow_redirects=True,
-                ) as client:
-                    resp = await client.get(url, headers=headers)
-                if resp.status_code >= 500:
+
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(req_timeout, connect=min(req_timeout, 5.0)),
+            follow_redirects=True,
+        ) as client:
+            # Pull multiple crt.sh query forms in parallel per attempt to avoid single endpoint bias.
+            json_responses = await asyncio.gather(
+                *(client.get(url, headers=headers) for url in json_urls),
+                return_exceptions=True,
+            )
+            for response in json_responses:
+                if isinstance(response, Exception):
                     continue
-                raw = str(resp.text or "").strip()
-            except Exception:
-                continue
-
-            if not raw:
-                continue
-            parsed = _parse_crtsh_rows(raw, domain_l)
-            if parsed:
-                best_effort.update(parsed)
-                # Early exit only when we have substantive CT coverage.
-                if len(best_effort) >= 3:
-                    return best_effort
-
-        # Fallback for crt.sh degraded JSON responses: parse hostnames from HTML body.
-        for url in html_urls:
-            if (asyncio.get_running_loop().time() - started) > CRTSH_MAX_TOTAL_SEC:
-                break
-            raw = ""
-            try:
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(req_timeout, connect=min(req_timeout, 5.0)),
-                    follow_redirects=True,
-                ) as client:
-                    resp = await client.get(url, headers=headers)
-                if resp.status_code >= 500:
+                if int(getattr(response, "status_code", 0)) >= 500:
                     continue
-                raw = str(resp.text or "").strip()
-            except Exception:
-                continue
+                raw = str(getattr(response, "text", "") or "").strip()
+                if not raw:
+                    continue
+                best_effort.update(_parse_crtsh_rows(raw, domain_l))
 
-            if not raw:
-                continue
-            parsed = _extract_hosts_from_blob(raw, domain_l)
-            if parsed:
-                best_effort.update(parsed)
-                if len(best_effort) >= 3:
-                    return best_effort
+            # Fallback for crt.sh degraded JSON responses: parse hostnames from HTML body.
+            html_responses = await asyncio.gather(
+                *(client.get(url, headers=headers) for url in html_urls),
+                return_exceptions=True,
+            )
+            for response in html_responses:
+                if isinstance(response, Exception):
+                    continue
+                if int(getattr(response, "status_code", 0)) >= 500:
+                    continue
+                raw = str(getattr(response, "text", "") or "").strip()
+                if not raw:
+                    continue
+                best_effort.update(_extract_hosts_from_blob(raw, domain_l))
 
-        # small paced backoff for crt.sh under load
+        # Once CT yields enough hosts, continue with DNS rounds rather than over-querying crt.sh.
+        if len(best_effort) >= 3:
+            break
+
         if attempt < len(attempt_timeouts):
             await asyncio.sleep(0.35 * attempt)
 
@@ -856,6 +844,8 @@ async def discover_from_dns_bruteforce(
     dns_resolvers: list[str] | None = None,
     dns_doh_endpoints: list[str] | None = None,
     dns_enable_doh: bool | None = None,
+    resolver: _AsyncResolver | None = None,
+    max_candidates: int | None = None,
 ) -> set[str]:
     """Brute-force subdomains asynchronously and keep only live DNS assets."""
     del dns_doh_endpoints, dns_enable_doh  # kept for API compatibility
@@ -864,7 +854,9 @@ async def discover_from_dns_bruteforce(
     if not domain_l:
         return set()
 
-    max_words = max(32, int(os.getenv("SCAN_DNS_MAX_CANDIDATES", "600")))
+    max_words = max(64, int(os.getenv("SCAN_DNS_MAX_CANDIDATES", "1000")))
+    if max_candidates is not None:
+        max_words = max(64, int(max_candidates))
     if wordlist is None:
         words = _rank_words(_expand_seed_words(_load_wordlist(domain_l)), limit=MAX_BRUTEFORCE_WORDS)
     else:
@@ -874,8 +866,8 @@ async def discover_from_dns_bruteforce(
     candidates = {domain_l, f"www.{domain_l}"}
     candidates.update({f"{token}.{domain_l}" for token in words})
 
-    resolver = _AsyncResolver(_parse_dns_resolvers(dns_resolvers), domain=domain_l)
-    return await _resolve_candidates_live(candidates, resolver)
+    live_resolver = resolver or _AsyncResolver(_parse_dns_resolvers(dns_resolvers), domain=domain_l)
+    return await _resolve_candidates_live(candidates, live_resolver)
 
 
 async def _discover_vpn_signals_async(domain: str, resolver: _AsyncResolver) -> dict[str, dict[str, bool]]:
@@ -943,40 +935,71 @@ async def discover_assets_async(
     ct_hosts = await discover_from_crtsh(domain_l)
     vantage_hosts = await _discover_from_multi_vantage(domain_l)
     passive_discovered = {domain_l, *ct_hosts, *vantage_hosts}
+
+    # Always validate passive sources because stale CT/vantage entries are common.
+    live_ct_hosts = await _resolve_candidates_live(ct_hosts, resolver)
+    live_vantage_hosts = await _resolve_candidates_live(vantage_hosts, resolver)
+
     ct_seed_words = _seed_tokens_from_hosts(passive_discovered, domain_l)
     history_tokens = _load_historical_inventory_tokens(domain_l)
     explicit_words = set(wordlist or [])
-    wave_1_limit = max(96, int(os.getenv("SCAN_DNS_WAVE1_WORD_LIMIT", "180")))
-    wave_2_limit = max(64, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "120")))
+
+    wave_1_limit = max(160, int(os.getenv("SCAN_DNS_WAVE1_WORD_LIMIT", "260")))
+    wave_2_limit = max(140, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "220")))
+    wave_3_limit = max(120, int(os.getenv("SCAN_DNS_WAVE3_WORD_LIMIT", "180")))
+
     initial_words = _rank_words(
         _expand_seed_words({*explicit_words, *ct_seed_words, *history_tokens, *get_bootstrap_dns_tokens()}),
         limit=wave_1_limit,
     )[:wave_1_limit]
 
-    # Wave 1: primary DNS brute-force with CT + history-informed words.
+    # Wave 1: broad brute-force from CT + inventory + user-provided seeds.
     brute_wave_1 = await discover_from_dns_bruteforce(
         domain_l,
         wordlist=initial_words,
         dns_resolvers=dns_resolvers,
+        resolver=resolver,
+        max_candidates=wave_1_limit,
     )
 
-    # Validate passive results too, because CT/passive sources can include stale/decommissioned hosts.
-    live_ct_hosts = await _resolve_candidates_live(ct_hosts, resolver)
-    live_vantage_hosts = await _resolve_candidates_live(vantage_hosts, resolver)
-
-    # Wave 2: learn fresh labels from live hosts and re-probe for missed assets.
-    learned_tokens = _seed_tokens_from_hosts({*live_ct_hosts, *brute_wave_1}, domain_l)
+    # Wave 2: recursively learn labels from newly live hosts and probe deeper.
+    learned_tokens_wave_2 = _seed_tokens_from_hosts({*live_ct_hosts, *live_vantage_hosts, *brute_wave_1}, domain_l)
     wave_2_words = _rank_words(
-        _expand_seed_words({*initial_words, *learned_tokens, *history_tokens}),
+        _expand_seed_words({*initial_words, *learned_tokens_wave_2, *history_tokens}),
         limit=wave_2_limit,
     )[:wave_2_limit]
     brute_wave_2 = await discover_from_dns_bruteforce(
         domain_l,
         wordlist=wave_2_words,
         dns_resolvers=dns_resolvers,
+        resolver=resolver,
+        max_candidates=wave_2_limit,
     )
 
-    assets = sorted({domain_l, *live_ct_hosts, *live_vantage_hosts, *brute_wave_1, *brute_wave_2})
+    # Wave 3: focus on emergent host prefixes that often expose hidden internal-facing edges.
+    learned_tokens_wave_3 = _seed_tokens_from_hosts({*brute_wave_1, *brute_wave_2}, domain_l)
+    wave_3_words = _rank_words(
+        _expand_seed_words({*wave_2_words, *learned_tokens_wave_3, *history_tokens}),
+        limit=wave_3_limit,
+    )[:wave_3_limit]
+    brute_wave_3 = await discover_from_dns_bruteforce(
+        domain_l,
+        wordlist=wave_3_words,
+        dns_resolvers=dns_resolvers,
+        resolver=resolver,
+        max_candidates=wave_3_limit,
+    )
+
+    assets = sorted(
+        {
+            domain_l,
+            *live_ct_hosts,
+            *live_vantage_hosts,
+            *brute_wave_1,
+            *brute_wave_2,
+            *brute_wave_3,
+        }
+    )
     learn_bootstrap_dns_tokens(assets)
 
     vpn_signals: dict[str, dict[str, bool]] = {}

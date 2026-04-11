@@ -4,13 +4,25 @@ import asyncio
 import contextlib
 import os
 import re
+import shutil
 import socket
 import ssl
 import subprocess
 import tempfile
+import time
 from typing import Any
 
 import httpx
+
+try:
+    from cryptography import x509  # type: ignore
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519, ed448, rsa  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    x509 = None
+    rsa = None
+    ec = None
+    ed25519 = None
+    ed448 = None
 
 from ..models import TLSInfo
 from .cipher_database import get_cipher_metadata
@@ -20,6 +32,7 @@ TLS_PROBE_CONCURRENCY_LIMIT = 50
 SERVICE_PROBE_PORTS: tuple[int, ...] = (25, 465, 587, 993, 995, 8443, 9443)
 IMPLICIT_TLS_PORTS: set[int] = {465, 993, 995, 8443, 9443}
 SMTP_STARTTLS_PORTS: set[int] = {25, 587}
+TLS_CONNECT_ATTEMPTS = 4
 
 _SEM_BY_LOOP: dict[int, asyncio.Semaphore] = {}
 
@@ -159,6 +172,8 @@ def _build_context(permissive: bool = False) -> ssl.SSLContext:
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     context.options |= ssl.OP_NO_COMPRESSION
+    with contextlib.suppress(Exception):
+        context.set_alpn_protocols(["h2", "http/1.1"])
     if permissive:
         with contextlib.suppress(Exception):
             context.set_ciphers("DEFAULT:@SECLEVEL=1")
@@ -175,6 +190,8 @@ def _classify_failure(message: str | None) -> tuple[str, str]:
         return "dns_resolution", "Unreachable (DNS Resolution Failed)"
     if any(term in lower for term in ("connection refused", "actively refused", "10061")):
         return "service_closed", "Port open check failed (Service Closed/Refused)"
+    if any(term in lower for term in ("eof occurred", "unexpected eof", "http request", "plain http", "first record")):
+        return "tls_handshake_failed", "TLS handshake failed (possible WAF/CDN protocol gate)"
     if any(
         term in lower
         for term in (
@@ -266,52 +283,110 @@ async def _python_tls_handshake(
     timeout: float,
     context: ssl.SSLContext,
 ) -> dict[str, Any]:
-    writer = None
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(
-                host,
-                port,
-                ssl=context,
-                server_hostname=host,  # mandatory SNI for CDN/WAF routed hosts
-                ssl_handshake_timeout=timeout,
-            ),
-            timeout=max(timeout + 0.8, timeout),
-        )
-        del reader
+    host_l = str(host or "").strip().lower().rstrip(".")
+    if not host_l:
+        raise RuntimeError("empty host")
 
-        ssl_obj = writer.get_extra_info("ssl_object")
-        if ssl_obj is None:
-            raise RuntimeError("TLS socket did not expose SSL object")
+    loop = asyncio.get_running_loop()
+    resolved = await asyncio.wait_for(
+        loop.getaddrinfo(host_l, port, type=socket.SOCK_STREAM),
+        timeout=max(1.0, timeout),
+    )
 
-        cert = ssl_obj.getpeercert() if ssl_obj else None
-        der_cert = ssl_obj.getpeercert(binary_form=True) if ssl_obj else None
+    unique_targets: list[tuple[socket.AddressFamily, tuple[str, int]]] = []
+    seen: set[tuple[str, int]] = set()
+    for family, _socktype, _proto, _canonname, sockaddr in resolved:
+        if family not in (socket.AF_INET, socket.AF_INET6) or not sockaddr:
+            continue
+        addr_ip = str(sockaddr[0]).strip()
+        if not addr_ip:
+            continue
+        key = (addr_ip, int(port))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_targets.append((family, (addr_ip, int(port))))
 
-        out: dict[str, Any] = {
-            "tls_version": ssl_obj.version() if ssl_obj else None,
-            "cipher_suite": (ssl_obj.cipher() or (None, None, None))[0],
-            "cert": cert if isinstance(cert, dict) else None,
-            "der_cert": der_cert if isinstance(der_cert, (bytes, bytearray)) else None,
-            "ocsp_stapling": False,
-        }
+    if not unique_targets:
+        raise RuntimeError("No resolved addresses available for TLS probe")
 
-        with contextlib.suppress(Exception):
-            ocsp = getattr(ssl_obj, "ocsp_response", None)
-            if callable(ocsp):
-                ocsp = ocsp()
-            out["ocsp_stapling"] = bool(ocsp)
+    # Prefer IPv4 first because some enterprise targets publish non-routable IPv6.
+    unique_targets.sort(key=lambda item: 0 if item[0] == socket.AF_INET else 1)
 
-        return out
-    finally:
-        if writer is not None:
-            writer.close()
+    last_error: str | None = None
+    for _family, (target_ip, target_port) in unique_targets[:TLS_CONNECT_ATTEMPTS]:
+        writer = None
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    target_ip,
+                    target_port,
+                    ssl=context,
+                    server_hostname=host_l,  # mandatory SNI for CDN/WAF routed hosts
+                    ssl_handshake_timeout=timeout,
+                ),
+                timeout=max(timeout + 0.8, timeout),
+            )
+            del reader
+
+            ssl_obj = writer.get_extra_info("ssl_object")
+            if ssl_obj is None:
+                raise RuntimeError("TLS socket did not expose SSL object")
+
+            cert = ssl_obj.getpeercert() if ssl_obj else None
+            der_cert = ssl_obj.getpeercert(binary_form=True) if ssl_obj else None
+
+            out: dict[str, Any] = {
+                "tls_version": ssl_obj.version() if ssl_obj else None,
+                "cipher_suite": (ssl_obj.cipher() or (None, None, None))[0],
+                "cert": cert if isinstance(cert, dict) else None,
+                "der_cert": der_cert if isinstance(der_cert, (bytes, bytearray)) else None,
+                "ocsp_stapling": False,
+                "connected_ip": target_ip,
+            }
+
             with contextlib.suppress(Exception):
-                await writer.wait_closed()
+                ocsp = getattr(ssl_obj, "ocsp_response", None)
+                if callable(ocsp):
+                    ocsp = ocsp()
+                out["ocsp_stapling"] = bool(ocsp)
+
+            return out
+        except Exception as exc:
+            last_error = f"{target_ip}: {exc}"
+        finally:
+            if writer is not None:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+
+    raise RuntimeError(last_error or "TLS handshake failed on all resolved addresses")
 
 
 def _extract_cert_sig_algo_and_bits_from_der_sync(der_cert: bytes | None) -> tuple[str | None, int | None]:
     if not der_cert:
         return None, None
+
+    # Fast path: parse locally via cryptography to avoid dependency on openssl CLI availability.
+    if x509 is not None:
+        with contextlib.suppress(Exception):
+            cert = x509.load_der_x509_certificate(der_cert)
+            sig_name = str(getattr(cert.signature_algorithm_oid, "_name", "") or "").strip()
+            sig_algo = _normalize_sig_algo(sig_name)
+
+            bits: int | None = None
+            public_key = cert.public_key()
+            if rsa is not None and isinstance(public_key, rsa.RSAPublicKey):
+                bits = int(public_key.key_size)
+            elif ec is not None and isinstance(public_key, ec.EllipticCurvePublicKey):
+                bits = int(public_key.key_size)
+            elif ed25519 is not None and isinstance(public_key, ed25519.Ed25519PublicKey):
+                bits = 256
+            elif ed448 is not None and isinstance(public_key, ed448.Ed448PublicKey):
+                bits = 456
+
+            if sig_algo or bits:
+                return sig_algo, bits
 
     sig_algo: str | None = None
     key_bits: int | None = None
@@ -409,6 +484,8 @@ def _parse_openssl_probe(text: str) -> dict[str, Any]:
 
 
 def _probe_with_openssl_sync(host: str, port: int, timeout: float) -> dict[str, Any]:
+    if not shutil.which("openssl"):
+        return {}
     probes = [
         ["-tls1_3"],
         ["-tls1_2"],
@@ -569,6 +646,7 @@ async def inspect_tls_async(host: str, port: int = 443, timeout: float | None = 
     async with sem:
         last_error: str | None = None
         handshake: dict[str, Any] | None = None
+        started = time.perf_counter()
 
         # Try default handshake first, then permissive context for strict legacy endpoints.
         for permissive in (False, True):
@@ -667,6 +745,18 @@ async def inspect_tls_async(host: str, port: int = 443, timeout: float | None = 
                     info.key_encapsulation_mechanism = info.key_exchange_group
 
             info.hsts_present = await _probe_hsts(host_l, timeout)
+
+        if not info.tls_version and not info.cipher_suite and not info.scan_error:
+            info.scan_error = "TLS probe failed without cryptographic evidence"
+            info.network_status = info.network_status or "probe_failed"
+
+        if info.scan_error and "unknown" in str(info.scan_error).lower():
+            info.scan_error = "Unreachable (Network Blocked)" if info.network_status == "network_blocked" else info.scan_error
+
+        elapsed = time.perf_counter() - started
+        if elapsed > max(2.5, timeout * 1.5) and not info.tls_version and not info.cipher_suite and not info.scan_error:
+            info.scan_error = "Unreachable (Network Blocked)"
+            info.network_status = info.network_status or "network_blocked"
 
         return info
 
