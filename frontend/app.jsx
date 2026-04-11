@@ -139,7 +139,6 @@ const Cell = RCH.Cell || (() => null);
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
 const LOCAL_API_FALLBACKS = ["http://127.0.0.1:8000", "http://localhost:8000"];
-const RAILWAY_BACKEND = "https://quanthunt-production-5687.up.railway.app";
 const PERSONALIZATION_USER_KEY = "quanthunt_persona_user_id";
 const sanitizeApiBase = (value) => String(value || "").trim().replace(/\/+$/, "");
 const isAbsoluteHttpApi = (value) => /^https?:\/\//i.test(sanitizeApiBase(value));
@@ -183,13 +182,13 @@ const resolveApiBase = () => {
       ? ""
       : `http://${window.location.hostname}:8000`;
   }
-  if (window.location.hostname.includes("vercel.app")) {
-    return RAILWAY_BACKEND;
-  }
   const configuredApi = sanitizeApiBase(
     window.QUANTHUNT_CONFIG && window.QUANTHUNT_CONFIG.API_BASE,
   );
   if (isAbsoluteHttpApi(configuredApi)) return configuredApi;
+  if (window.location.hostname.includes("vercel.app")) {
+    return "";
+  }
   try {
     const savedApi = sanitizeApiBase(window.localStorage.getItem("qh_api_base"));
     if (isAbsoluteHttpApi(savedApi)) return savedApi;
