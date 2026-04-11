@@ -46,22 +46,6 @@ def _railway_hosted_mode() -> bool:
 
 MAX_BRUTEFORCE_WORDS = 5000 if _railway_hosted_mode() else 2500
 
-
-def _railway_hosted_mode() -> bool:
-    return any(
-        os.getenv(name)
-        for name in (
-            "RAILWAY_ENVIRONMENT",
-            "RAILWAY_PROJECT_ID",
-            "RAILWAY_SERVICE_ID",
-            "RAILWAY_PUBLIC_DOMAIN",
-            "RAILWAY_STATIC_URL",
-        )
-    )
-
-
-MAX_BRUTEFORCE_WORDS = 5000 if _railway_hosted_mode() else 2500
-
 # Preserve legacy target-specific coverage when historical wordlists were saved
 # under an older hostname spelling.
 DOMAIN_WORDLIST_ALIASES: dict[str, tuple[str, ...]] = {
