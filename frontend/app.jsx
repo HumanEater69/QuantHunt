@@ -3024,7 +3024,6 @@ function ScannerTab({
   pendingAutoScan = null,
   onAutoScanConsumed = () => {},
 }) {
-  const CONNECTED_FLASH_SESSION_KEY = "qh_connected_flash_seen_v1";
   const [domain, setDomain] = useState("");
   const [scanId, setScanId] = useState(null);
   const [scanData, setScanData] = useState(null);
@@ -3062,50 +3061,6 @@ function ScannerTab({
     }
   }, [flashMessage]);
 
-  useEffect(() => {
-    let alive = true;
-    const isHostedVercel =
-      typeof window !== "undefined" &&
-      String(window.location.hostname || "").includes("vercel.app");
-    if (!isHostedVercel) return;
-
-    try {
-      const seen = String(sessionStorage.getItem(CONNECTED_FLASH_SESSION_KEY) || "");
-      if (seen === "1") return;
-    } catch {
-      // Ignore storage read failures.
-    }
-
-    (async () => {
-      try {
-        const r = await fetch(`${API}/api/persistence-status`);
-        if (!r.ok) return;
-        const status = await r.json().catch(() => null);
-        if (!alive || !status) return;
-        if (Boolean(status.enabled) && Boolean(status.connected)) {
-          setFlashMessage({
-            type: "success",
-            tone: "emerald-gold",
-            durationMs: 5200,
-            text:
-              "LINK SECURED: VERCEL UI + RAILWAY API + MONGODB MIRROR ONLINE",
-          });
-          try {
-            sessionStorage.setItem(CONNECTED_FLASH_SESSION_KEY, "1");
-          } catch {
-            // Ignore storage write failures.
-          }
-        }
-      } catch {
-        // Connectivity toast is optional; ignore transient startup failures.
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const statusScore = (status) =>
     ({
       [POSTURE_LABELS.vulnerable]: 100,
@@ -3135,6 +3090,7 @@ function ScannerTab({
   const scanReportBuckets = useMemo(() => {
     const raw = scanData?.report_buckets || {};
     const assets = Array.isArray(scanData?.assets) ? scanData.assets : [];
+    const measuredFromAssets = assets.filter((asset) => Boolean(asset?.tls_measured)).length;
     const parseBucket = (value, fallback) => {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return fallback;
@@ -3151,35 +3107,47 @@ function ScannerTab({
       const reason = String(asset?.tls_unknown_reason || "").trim().toLowerCase();
       return reason === "dns_resolution";
     }).length;
-    const liveOnlyUnknown = Math.max(0, tlsUnknownCount - dnsResolutionUnknown);
-    const liveOnlyDenominator = Math.max(assets.length - dnsResolutionUnknown, 1);
+    const bucketLiveDns = parseBucket(raw.live_dns, assets.length);
+    const bucketMeasured = parseBucket(raw.live_tls_measured, measuredFromAssets);
+    const inferredUnknownFromBuckets = Math.max(0, bucketLiveDns - bucketMeasured);
+    const effectiveUnknownCount = parseBucket(
+      raw.live_tls_unknown,
+      Math.max(tlsUnknownCount, inferredUnknownFromBuckets),
+    );
+    const effectiveDnsResolutionUnknown = parseBucket(
+      raw.dns_resolution_unknown,
+      dnsResolutionUnknown,
+    );
+    const liveOnlyUnknown = parseBucket(
+      raw.live_tls_unknown_live_only,
+      Math.max(0, effectiveUnknownCount - effectiveDnsResolutionUnknown),
+    );
+    const rateDenominator = Math.max(bucketLiveDns, assets.length, 1);
+    const liveOnlyDenominator = Math.max(
+      rateDenominator - effectiveDnsResolutionUnknown,
+      1,
+    );
     return {
       passive_discovered: parseBucket(raw.passive_discovered, assets.length),
-      live_dns: parseBucket(raw.live_dns, assets.length),
+      live_dns: bucketLiveDns,
       live_tls_measured: parseBucket(
         raw.live_tls_measured,
-        assets.filter((asset) => Boolean(asset?.tls_measured)).length,
+        measuredFromAssets,
       ),
-      live_tls_unknown: parseBucket(raw.live_tls_unknown, tlsUnknownCount),
+      live_tls_unknown: effectiveUnknownCount,
       live_tls_unknown_rate: parsePercent(
         raw.live_tls_unknown_rate,
-        assets.length > 0 ? (tlsUnknownCount / assets.length) * 100 : 0,
+        (effectiveUnknownCount / rateDenominator) * 100,
       ),
-      live_tls_unknown_live_only: parseBucket(
-        raw.live_tls_unknown_live_only,
-        liveOnlyUnknown,
-      ),
+      live_tls_unknown_live_only: liveOnlyUnknown,
       live_tls_unknown_live_only_rate: parsePercent(
         raw.live_tls_unknown_live_only_rate,
         (liveOnlyUnknown / liveOnlyDenominator) * 100,
       ),
-      dns_resolution_unknown: parseBucket(
-        raw.dns_resolution_unknown,
-        dnsResolutionUnknown,
-      ),
+      dns_resolution_unknown: effectiveDnsResolutionUnknown,
       dns_resolution_unknown_rate: parsePercent(
         raw.dns_resolution_unknown_rate,
-        assets.length > 0 ? (dnsResolutionUnknown / assets.length) * 100 : 0,
+        (effectiveDnsResolutionUnknown / rateDenominator) * 100,
       ),
     };
   }, [scanData?.report_buckets, scanData?.assets]);
@@ -4275,26 +4243,11 @@ function ScannerTab({
               background:
                 flashMessage.type === "error"
                   ? "linear-gradient(145deg, rgba(145,0,20,0.42), rgba(100,0,10,0.30))"
-                  : flashMessage.tone === "emerald-gold"
-                    ? "linear-gradient(145deg, rgba(39,128,87,0.78), rgba(178,142,68,0.62), rgba(25,95,69,0.74))"
                   : flashFloating
                     ? "linear-gradient(145deg, rgba(23,99,70,0.76), rgba(20,85,61,0.64))"
                     : "rgba(40,167,69,0.15)",
-              border: `1px solid ${
-                flashMessage.type === "error"
-                  ? C.red
-                  : flashMessage.tone === "emerald-gold"
-                    ? C.yellow
-                    : C.green
-              }`,
-              color:
-                flashMessage.type === "error"
-                  ? C.red
-                  : flashMessage.tone === "emerald-gold"
-                    ? darkTheme
-                      ? "#f6e8bb"
-                      : "#3d4d28"
-                    : C.green,
+              border: `1px solid ${flashMessage.type === "error" ? C.red : C.green}`,
+              color: flashMessage.type === "error" ? C.red : C.green,
               padding: "12px 18px",
               borderRadius: 12,
               marginBottom: 16,
