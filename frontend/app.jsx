@@ -142,6 +142,7 @@ const LOCAL_API_FALLBACKS = ["http://127.0.0.1:8000", "http://localhost:8000"];
 const RAILWAY_BACKEND = "https://quanthunt-production-5687.up.railway.app";
 const PERSONALIZATION_USER_KEY = "quanthunt_persona_user_id";
 const sanitizeApiBase = (value) => String(value || "").trim().replace(/\/+$/, "");
+const isAbsoluteHttpApi = (value) => /^https?:\/\//i.test(sanitizeApiBase(value));
 const createPersonalizationUserId = () => {
   const seed =
     window.crypto && typeof window.crypto.randomUUID === "function"
@@ -169,7 +170,7 @@ const resolveApiBase = () => {
     const queryApi = sanitizeApiBase(
       new URLSearchParams(window.location.search).get("api"),
     );
-    if (queryApi) {
+    if (isAbsoluteHttpApi(queryApi)) {
       window.localStorage.setItem("qh_api_base", queryApi);
       return queryApi;
     }
@@ -182,18 +183,18 @@ const resolveApiBase = () => {
       ? ""
       : `http://${window.location.hostname}:8000`;
   }
-  try {
-    const savedApi = sanitizeApiBase(window.localStorage.getItem("qh_api_base"));
-    if (savedApi) return savedApi;
-  } catch {
-    // Ignore storage/query failures and use same-origin fallback.
+  if (window.location.hostname.includes("vercel.app")) {
+    return RAILWAY_BACKEND;
   }
   const configuredApi = sanitizeApiBase(
     window.QUANTHUNT_CONFIG && window.QUANTHUNT_CONFIG.API_BASE,
   );
-  if (configuredApi) return configuredApi;
-  if (window.location.hostname.includes("vercel.app")) {
-    return RAILWAY_BACKEND;
+  if (isAbsoluteHttpApi(configuredApi)) return configuredApi;
+  try {
+    const savedApi = sanitizeApiBase(window.localStorage.getItem("qh_api_base"));
+    if (isAbsoluteHttpApi(savedApi)) return savedApi;
+  } catch {
+    // Ignore storage/query failures and use same-origin fallback.
   }
   return "";
 };
@@ -201,9 +202,10 @@ let API = resolveApiBase();
 const setRuntimeApiBase = (nextBase) => {
   API = sanitizeApiBase(nextBase);
   try {
-    if (API) {
+    if (isAbsoluteHttpApi(API)) {
       window.localStorage.setItem("qh_api_base", API);
     } else {
+      API = "";
       window.localStorage.removeItem("qh_api_base");
     }
   } catch {
