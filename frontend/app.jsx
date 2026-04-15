@@ -3800,7 +3800,7 @@ function ScannerTab({
     setPolling(true);
 
     const requestedModel = effectiveScanModelForDomain(target, scanModel);
-    const deepScan = requestedModel === "banking";
+    const deepScan = true; // Always use deep scan for all domains
     if (requestedModel !== normalizeScanModel(scanModel)) {
       onAutoSwitchForDomain(target, requestedModel);
       setFlashMessage({
@@ -3837,7 +3837,7 @@ function ScannerTab({
 
     (async () => {
       try {
-        const deepScan = normalizeScanModel(pendingAutoScan.scan_model) === "banking";
+        const deepScan = true; // Always use deep scan for all domains
         await executeScan(pendingAutoScan.domain, pendingAutoScan.scan_model, deepScan);
       } finally {
         if (alive) onAutoScanConsumed();

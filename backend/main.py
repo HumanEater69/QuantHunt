@@ -379,10 +379,15 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
     if not findings:
         return False, ["No findings were produced for this scan."], 100.0
 
-    strictness_pct = max(
-        0.0,
-        min(100.0, float(os.getenv("CERT_STRICTNESS_PERCENT", "40"))),
-    )
+    # Determine strictness based on scan model: banking = very strict (90%), general = moderate (40%)
+    scan_model = str(scan.get("scan_model") or "general").lower()
+    if scan_model == "banking":
+        strictness_pct = 90.0  # Very strict for banking
+    else:
+        strictness_pct = max(
+            0.0,
+            min(100.0, float(os.getenv("CERT_STRICTNESS_PERCENT", "40"))),
+        )
     strictness = strictness_pct / 100.0
     avg_risk_threshold = 85.0 - (25.0 * strictness)
     warning_ratio_threshold = 0.70 - (0.35 * strictness)
