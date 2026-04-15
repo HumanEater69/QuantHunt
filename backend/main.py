@@ -603,11 +603,29 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
             "No NIST PQC signal (FIPS 203/204/205) detected in observed TLS/certificate metadata."
         )
 
+    # Override: if hybrid assets > fail assets, mark as certified hybrid regardless of warnings
+    hybrid_assets_count = len({
+        str(row["asset"])
+        for row in asset_rows
+        if str(row["label_state"]) == "resilient"
+    })
+    fail_assets_count = len({
+        str(row["asset"])
+        for row in asset_rows
+        if str(row["label_state"]) == "vulnerable"
+    })
+    if hybrid_assets_count > fail_assets_count and hybrid_assets_count > 0:
+        # Hybrid dominates - certify as hybrid regardless of warning/PQC signals
+        scan["_hybrid_dominant"] = True  # Mark for hybrid-pass certificate
+        return True, [f"Hybrid-dominant: {hybrid_assets_count} hybrid assets exceed {fail_assets_count} vulnerable."], round(avg_risk, 2)
+
     return len(reasons) == 0, reasons, round(avg_risk, 2)
 
 
 def _certificate_kind_and_label(scan: dict, avg_risk: float, eligible: bool) -> tuple[str, str]:
     if scan.get("_reused_hybrid_from_scan_id"):
+        return "hybrid-pass", "Quantum-Resilient (Hybrid)"
+    if scan.get("_hybrid_dominant"):
         return "hybrid-pass", "Quantum-Resilient (Hybrid)"
     label = certificate_readiness_label(scan, avg_risk, eligible=eligible)
     if not eligible:
