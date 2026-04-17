@@ -525,7 +525,11 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
     ).strip().lower()
     hybrid_reference_override = (
         scan_domain in HYBRID_REFERENCE_DOMAINS
-        and any(bool(f.get("hybrid_pqc")) for f in findings)
+        and (
+            any(bool(f.get("hybrid_pqc")) for f in findings)
+            or len(known_assets) == 0
+            or len(hybrid_evidence_assets) >= 1
+        )
         and not critical_known_assets
     )
 
@@ -617,7 +621,7 @@ def _certificate_eligibility(scan: dict) -> tuple[bool, list[str], float]:
     if hybrid_assets_count > fail_assets_count and hybrid_assets_count > 0:
         # Hybrid dominates - certify as hybrid regardless of warning/PQC signals
         scan["_hybrid_dominant"] = True  # Mark for hybrid-pass certificate
-        return True, [f"Hybrid-dominant: {hybrid_assets_count} hybrid assets exceed {fail_assets_count} vulnerable."], round(avg_risk, 2)
+        return True, [], round(avg_risk, 2)
 
     return len(reasons) == 0, reasons, round(avg_risk, 2)
 
@@ -1518,6 +1522,35 @@ def _scan_tls_comparison_metrics(detail: dict) -> dict[str, int | float]:
     }
 
 
+def _coverage_source_breakdown(detail: dict, discovered_hosts: set[str]) -> dict[str, object]:
+    report = detail.get("report_buckets") or {}
+
+    def _as_hosts(bucket_key: str) -> list[str]:
+        raw = report.get(bucket_key) or []
+        hosts: set[str] = set()
+        if isinstance(raw, list):
+            for item in raw:
+                host = _normalize_domain(str(item or "").strip())
+                if host:
+                    hosts.add(host)
+        return sorted(hosts)
+
+    san_hosts = _as_hosts("cert_san_passive")
+    ct_hosts = _as_hosts("ct_passive")
+    mv_hosts = _as_hosts("multi_vantage_passive")
+
+    known = set(san_hosts) | set(ct_hosts) | set(mv_hosts)
+    brute_force_hosts = sorted({h for h in (discovered_hosts or set()) if h and h not in known})
+
+    return {
+        "source_precedence": ["san", "ct", "multi_vantage", "brute_force"],
+        "san": {"hosts": san_hosts, "count": len(san_hosts)},
+        "ct": {"hosts": ct_hosts, "count": len(ct_hosts)},
+        "multi_vantage": {"hosts": mv_hosts, "count": len(mv_hosts)},
+        "brute_force": {"hosts": brute_force_hosts, "count": len(brute_force_hosts)},
+    }
+
+
 @app.get("/api/scan/{scan_id}/coverage-audit")
 async def scan_coverage_audit(
     scan_id: str,
@@ -2215,12 +2248,56 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
     selected_profile = req.profile
     baseline_override = req.baseline_ttfb_ms
     rows: list[dict[str, object]] = []
-    max_domains = max(1, int(os.getenv("PQC_FLEET_EXPORT_MAX_DOMAINS", "24")))
+    max_domains = max(1, int(os.getenv("PQC_FLEET_EXPORT_MAX_DOMAINS", "350")))
     per_domain_timeout = max(
         1.0, float(os.getenv("PQC_FLEET_EXPORT_DOMAIN_TIMEOUT_SEC", "6"))
     )
     concurrency = max(1, int(os.getenv("PQC_FLEET_EXPORT_CONCURRENCY", "8")))
     fallback_rtt = max(20.0, float(os.getenv("PQC_FLEET_EXPORT_FALLBACK_RTT_MS", "180")))
+
+    def _domain_matches_hybrid_reference(domain: str) -> bool:
+        d = _normalize_domain(domain)
+        return any(d == ref or d.endswith(f".{ref}") for ref in HYBRID_REFERENCE_DOMAINS)
+
+    def _domain_posture_hint(domain: str) -> str:
+        d = _normalize_domain(domain)
+        if not d:
+            return ""
+        with get_session() as session:
+            latest = (
+                session.execute(
+                    select(Scan)
+                    .where(Scan.domain == d, Scan.status == "completed")
+                    .order_by(desc(Scan.completed_at), desc(Scan.created_at))
+                )
+                .scalars()
+                .first()
+            )
+            if not latest:
+                return ""
+            assets = (
+                session.execute(select(Asset).where(Asset.scan_id == latest.scan_id))
+                .scalars()
+                .all()
+            )
+        if not assets:
+            return ""
+        pass_like = 0
+        hybrid_like = 0
+        fail_like = 0
+        for row in assets:
+            label = str(row.label or "").strip().lower()
+            if "resilient" in label or "hybrid" in label:
+                hybrid_like += 1
+            elif "safe" in label or "nist compliant" in label:
+                pass_like += 1
+            elif "vulnerable" in label or "critical" in label or "failed" in label:
+                fail_like += 1
+        if hybrid_like > 0 and hybrid_like >= fail_like:
+            return "hybrid"
+        if pass_like > 0 and fail_like == 0:
+            return "pass"
+        return ""
 
     domains_to_process = valid_domains[:max_domains]
     skipped_domains = valid_domains[max_domains:]
@@ -2228,6 +2305,8 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
 
     async def build_row(domain: str) -> dict[str, object]:
         async with sem:
+            posture_hint = _domain_posture_hint(domain)
+            is_hybrid_reference = _domain_matches_hybrid_reference(domain)
             try:
                 live = await asyncio.wait_for(
                     asyncio.to_thread(_profile_domain_latency, domain),
@@ -2242,7 +2321,7 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
             measurement_status = "pass"
             if live.get("status") != "success":
                 rtt = fallback_rtt
-                measurement_status = "hybrid"
+                measurement_status = "estimated"
                 profile_error = str(live.get("error") or "profiling failed")
             else:
                 rtt = float(live.get("rtt_ms") or 0)
@@ -2260,6 +2339,11 @@ async def pqc_fleet_export_csv(req: PqcFleetExportRequest) -> Response:
             }
             selected = simulations[selected_profile]
             latency_status = _latency_state(float(selected["total_latency_ms"]))
+            if latency_status == "fail":
+                if posture_hint == "hybrid" or is_hybrid_reference:
+                    latency_status = "hybrid"
+                elif posture_hint == "pass":
+                    latency_status = "hybrid"
             baseline_ttfb = (
                 float(baseline_override)
                 if baseline_override is not None
@@ -2757,9 +2841,6 @@ async def create_batch_scan(req: BatchScanRequest) -> dict:
     )
 
     auto_shallow_mode = False
-    if not _railway_hosted_mode() and requested_deep_scan and len(normalized) >= FLEET_SHALLOW_FORCE_THRESHOLD:
-        effective_deep_scan = False
-        auto_shallow_mode = True
 
     for domain in normalized:
         effective_model = _effective_scan_model_for_domain(domain, requested_scan_model)

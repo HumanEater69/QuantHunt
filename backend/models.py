@@ -96,6 +96,9 @@ class TLSInfo(BaseModel):
     hsts_present: bool = False
     ocsp_stapling: bool = False
     scan_error: str | None = None
+    hybrid_pqc_markers: dict[str, list[str]] = Field(default_factory=dict)
+    pqc_adoption_score: float | None = None
+    pqc_adoption_reason: str | None = None
 
 class APIInfo(BaseModel):
     host: str

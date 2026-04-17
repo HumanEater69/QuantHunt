@@ -209,6 +209,8 @@ def assemble_scan_payload(session: Session, scan_id: str) -> dict | None:
     packed_assets = []
     for a in assets:
         cat = finding_map.get(a.id, {})
+        meta = a.metadata_json or {}
+        pqc_meta = meta.get("pqc", {}) if isinstance(meta.get("pqc", {}), dict) else {}
         packed_assets.append(
             {
                 "asset_id": a.id,
@@ -216,6 +218,16 @@ def assemble_scan_payload(session: Session, scan_id: str) -> dict | None:
                 "asset_type": a.asset_type,
                 "tls": a.metadata_json.get("tls", {}) if a.metadata_json else {},
                 "api": a.metadata_json.get("api", {}) if a.metadata_json else {},
+                "pqc": pqc_meta,
+                "pqc_status": str(meta.get("pqc_status") or pqc_meta.get("status") or "ERROR"),
+                "pqc_provider": pqc_meta.get("provider") or meta.get("pqc_provider"),
+                "pqc_negotiated_group": pqc_meta.get("negotiated_group") or meta.get("pqc_negotiated_group"),
+                "pqc_tls_version": pqc_meta.get("tls_version") or meta.get("pqc_tls_version"),
+                "pqc_resolved_ip": pqc_meta.get("resolved_ip") or meta.get("pqc_resolved_ip"),
+                "pqc_cdn_headers_detected": list(pqc_meta.get("cdn_headers_detected") or meta.get("pqc_cdn_headers_detected") or []),
+                "pqc_asn_org": pqc_meta.get("asn_org") or meta.get("pqc_asn_org"),
+                "pqc_detection_method": pqc_meta.get("detection_method") or meta.get("pqc_detection_method"),
+                "pqc_error": pqc_meta.get("error") or meta.get("pqc_error"),
                 "key_exchange_status": cat.get("key_exchange", {}).get("status", "WARNING"),
                 "auth_status": cat.get("authentication", {}).get("status", "WARNING"),
                 "tls_status": cat.get("tls_version", {}).get("status", "WARNING"),
@@ -315,11 +327,21 @@ def scans_list_payload(session: Session) -> list[dict]:
     ]
 
 
-def _extract_report_buckets_from_logs(logs: list[ScanLog]) -> dict[str, int]:
-    default = {
+def _extract_report_buckets_from_logs(logs: list[ScanLog]) -> dict[str, object]:
+    numeric_defaults = {
         "passive_discovered": 0,
         "live_dns": 0,
+        "passive_unresolved_included": 0,
+        "graph_nodes": 0,
+        "graph_edges": 0,
         "live_tls_measured": 0,
+    }
+    list_defaults = {
+        "ct_passive": [],
+        "multi_vantage_passive": [],
+        "cert_san_passive": [],
+        "bfs_passive": [],
+        "bfs_live": [],
     }
     for entry in reversed(logs):
         msg = str(entry.message or "").strip()
@@ -337,14 +359,20 @@ def _extract_report_buckets_from_logs(logs: list[ScanLog]) -> dict[str, int]:
             continue
         if not isinstance(payload, dict):
             continue
-        out = dict(default)
-        for key in default:
+        out: dict[str, object] = dict(numeric_defaults)
+        for key in numeric_defaults:
             try:
                 out[key] = max(0, int(payload.get(key, 0)))
             except Exception:
                 out[key] = 0
+        for key, default_value in list_defaults.items():
+            raw = payload.get(key, default_value)
+            if isinstance(raw, list):
+                out[key] = [str(item).strip().lower() for item in raw if str(item).strip()]
+            else:
+                out[key] = []
         return out
-    return default
+    return {**numeric_defaults, **list_defaults}
 
 def scan_detail_payload(session: Session, scan_id: str) -> dict | None:
     scan = session.get(Scan, scan_id)
@@ -421,6 +449,7 @@ def scan_detail_payload(session: Session, scan_id: str) -> dict | None:
         tls_meta = meta.get("tls", {})
         api_meta = meta.get("api", {})
         vpn_meta = meta.get("vpn_signals", {})
+        pqc_meta = meta.get("pqc", {}) if isinstance(meta.get("pqc", {}), dict) else {}
         flat_meta = {
             "hsts": bool(tls_meta.get("hsts_present")),
             "ocsp": bool(tls_meta.get("ocsp_stapling")),
@@ -429,6 +458,15 @@ def scan_detail_payload(session: Session, scan_id: str) -> dict | None:
             "tls_measured": bool(meta.get("tls_measured", False)),
             "tls_unknown_reason": str(meta.get("tls_unknown_reason") or "none"),
             "service_reachable_non_443": bool(meta.get("service_reachable_non_443", False)),
+            "pqc_status": str(meta.get("pqc_status") or pqc_meta.get("status") or "ERROR"),
+            "pqc_negotiated_group": pqc_meta.get("negotiated_group") or meta.get("pqc_negotiated_group"),
+            "pqc_tls_version": pqc_meta.get("tls_version") or meta.get("pqc_tls_version"),
+            "pqc_provider": pqc_meta.get("provider") or meta.get("pqc_provider"),
+            "pqc_resolved_ip": pqc_meta.get("resolved_ip") or meta.get("pqc_resolved_ip"),
+            "pqc_cdn_headers_detected": list(pqc_meta.get("cdn_headers_detected") or meta.get("pqc_cdn_headers_detected") or []),
+            "pqc_asn_org": pqc_meta.get("asn_org") or meta.get("pqc_asn_org"),
+            "pqc_detection_method": pqc_meta.get("detection_method") or meta.get("pqc_detection_method"),
+            "pqc_error": pqc_meta.get("error") or meta.get("pqc_error"),
         }
         # Hybrid PQC detection for asset
         is_hybrid = is_hybrid_pqc_crypto(tls_meta)
@@ -446,6 +484,15 @@ def scan_detail_payload(session: Session, scan_id: str) -> dict | None:
                 "tls_measured": bool(meta.get("tls_measured", False)),
                 "tls_unknown_reason": str(meta.get("tls_unknown_reason") or "none"),
                 "hybrid_pqc": is_hybrid,
+                "pqc_status": str(meta.get("pqc_status") or pqc_meta.get("status") or "ERROR"),
+                "pqc_negotiated_group": pqc_meta.get("negotiated_group") or meta.get("pqc_negotiated_group"),
+                "pqc_tls_version": pqc_meta.get("tls_version") or meta.get("pqc_tls_version"),
+                "pqc_provider": pqc_meta.get("provider") or meta.get("pqc_provider"),
+                "pqc_resolved_ip": pqc_meta.get("resolved_ip") or meta.get("pqc_resolved_ip"),
+                "pqc_cdn_headers_detected": list(pqc_meta.get("cdn_headers_detected") or meta.get("pqc_cdn_headers_detected") or []),
+                "pqc_asn_org": pqc_meta.get("asn_org") or meta.get("pqc_asn_org"),
+                "pqc_detection_method": pqc_meta.get("detection_method") or meta.get("pqc_detection_method"),
+                "pqc_error": pqc_meta.get("error") or meta.get("pqc_error"),
                 "service_reachable_non_443": bool(meta.get("service_reachable_non_443", False)),
                 "service_probe_ports": list(meta.get("service_probe_ports") or []),
                 "vpn_signals": {

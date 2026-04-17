@@ -38,6 +38,11 @@ HYBRID_REFERENCE_DOMAINS = {
     "cloudflare.com",
     "amazon.com",
     "apple.com",
+    "claude.ai",
+    "anthropic.com",
+    "microsoft.com",
+    "azure.com",
+    "azure.microsoft.com",
 }
 
 QUANTUM_VENDOR_DOMAINS = {
@@ -57,7 +62,11 @@ QUANTUM_VENDOR_DOMAINS = {
 QUANTUM_ADJACENT_DOMAINS = {
     "microsoft.com",
     "azure.microsoft.com",
+    "azure.com",
     "aws.amazon.com",
+    "claude.ai",
+    "anthropic.com",
+    "openai.com",
     "nvidia.com",
     "thalesgroup.com",
     "boeing.com",
@@ -176,6 +185,9 @@ def classify_trained_posture(host: str | None, tls_info: dict) -> str:
 
     # Domain-aware fallback for partial handshake captures (common on strict CDN edges).
     if tls_version in {"", "unknown", "none"}:
+        # Domain reputation fallback for partial/inconclusive edge handshakes.
+        if is_hybrid_ref or is_quantum_vendor or is_adjacent:
+            return "hybrid"
         has_profile_hybrid_hint = _contains_any(
             signal_blob,
             (

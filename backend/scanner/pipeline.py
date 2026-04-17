@@ -27,8 +27,21 @@ from ..models import APIInfo, TLSInfo
 from ..tables import Asset, Scan
 from .api_analyzer import analyze_api
 from .ai_recommender import recommend_with_claude
-from .asset_discovery import _AsyncResolver, _resolve_candidates_live, discover_assets_async, generate_candidate_assets
+from .asset_discovery import (
+    _AsyncResolver,
+    _resolve_candidates_live,
+    discover_assets_async,
+    generate_candidate_assets,
+    get_hybrid_pqc_infrastructure_candidates,
+    score_assets_for_hybrid_pqc,
+)
 from .cbom_generator import build_cbom
+
+try:
+    from . import hybrid_pqc_discovery
+except Exception:  # pragma: no cover - optional hybrid PQC
+    hybrid_pqc_discovery = None
+
 from .pqc_engine import (
     classify_auth,
     classify_cert_algo,
@@ -39,6 +52,7 @@ from .pqc_engine import (
     hndl_score,
     recommendations_for_status,
 )
+from quanthunt.discover.pqc_probe import probe_pqc
 from .tls_inspector import inspect_tls_async, probe_service_ports_async
 
 
@@ -75,11 +89,11 @@ def _float_env(name: str, default: float, min_value: float = 0.1) -> float:
 
 def _discovery_timeout_for_scan(deep_scan: bool) -> float:
     railway_mode = _railway_hosted_mode()
-    base_timeout = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 120.0 if railway_mode else 45.0)
+    base_timeout = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 45.0 if railway_mode else 20.0)
     if not deep_scan:
         return base_timeout
     # Deep scans need a wider CT/DNS window to avoid dropping into root-only fallback.
-    deep_default = 240.0 if railway_mode else 120.0
+    deep_default = 75.0 if railway_mode else 75.0
     return _float_env("SCAN_DISCOVERY_TIMEOUT_SEC_DEEP", max(base_timeout, deep_default))
 
 
@@ -188,6 +202,26 @@ def _prioritize_assets(
         "admin",
         "banking",
         "payments",
+        "pki",
+        "ca",
+        "tls",
+        "kms",
+        "hsm",
+        "crypto",
+        "vault",
+        "cert",
+        "auth",
+        "identity",
+        "idp",
+        "oauth",
+        "saml",
+    }
+    
+    # PQC infrastructure priorities
+    pqc_preferred_labels = {
+        "tls", "pki", "ca", "kms", "hsm", "crypto", "vault",
+        "vpn", "ipsec", "gateway", "auth", "idp", "sso",
+        "banking", "payments", "finance", "trading",
     }
 
     def _left_label(host: str) -> str:
@@ -220,23 +254,29 @@ def _prioritize_assets(
             penalty += 1
         return penalty
 
-    def score(host: str) -> tuple[int, int, str]:
+    def score(host: str) -> tuple[int, int, int, str]:
         h = host.lower()
         left = _left_label(h)
         noise = _noise_penalty(left)
+        
         if h == domain:
-            return (0, 0, len(h), h)
+            return (0, noise, len(h), h)
         if h in preferred:
             return (1, noise, len(h), h)
-        if left in likely_labels:
+        
+        # PQC infrastructure tier 1: cryptographic core ops
+        if left in pqc_preferred_labels:
             return (2, noise, len(h), h)
-        if h.startswith("api.") or ".api." in h:
+        
+        if left in likely_labels:
             return (3, noise, len(h), h)
-        if h.startswith("www.") or ".www." in h:
+        if h.startswith("api.") or ".api." in h:
             return (4, noise, len(h), h)
-        if any(x in h for x in ("vpn", "gateway", "secure", "admin", "auth")):
+        if h.startswith("www.") or ".www." in h:
             return (5, noise, len(h), h)
-        return (6, noise, len(h), h)
+        if any(x in h for x in ("vpn", "gateway", "secure", "admin", "auth", "crypto", "kms")):
+            return (6, noise, len(h), h)
+        return (7, noise, len(h), h)
 
     return sorted(assets, key=score)
 
@@ -260,7 +300,8 @@ async def _scan_asset_bounded(
     pass2_timeout_sec: float,
     api_timeout_sec: float,
     service_probe_timeout_sec: float,
-) -> tuple[str, TLSInfo, APIInfo, list[dict[str, object]]]:
+    pqc_timeout_sec: float,
+) -> tuple[str, TLSInfo, APIInfo, list[dict[str, object]], object]:
     async with sem:
         service_probes: list[dict[str, object]] = []
 
@@ -329,7 +370,23 @@ async def _scan_asset_bounded(
         except Exception:
             api = APIInfo(host=asset)
 
-        return asset, tls, api, service_probes
+        try:
+            pqc_result = await asyncio.wait_for(
+                probe_pqc(asset, timeout=max(2, int(pqc_timeout_sec))),
+                timeout=max(pqc_timeout_sec + 1.0, pqc_timeout_sec),
+            )
+        except Exception as ex:
+            from quanthunt.models import PQCResult, PQCStatus
+
+            pqc_result = PQCResult(
+                hostname=asset,
+                port=443,
+                status=PQCStatus.ERROR,
+                detection_method="fallback",
+                error=str(ex),
+            )
+
+        return asset, tls, api, service_probes, pqc_result
 
 def _load_scan_deep_mode(scan_id: str, default: bool = True) -> bool:
     with get_session() as session:
@@ -354,15 +411,20 @@ async def run_scan_pipeline(
         probe_sec = 0.0
 
         deep_scan = _load_scan_deep_mode(scan_id, default=True)
-        max_assets = _int_env("SCAN_MAX_ASSETS_DEEP", 10_000) if deep_scan else _int_env("SCAN_MAX_ASSETS_SHALLOW", 10)
+        if deep_scan:
+            deep_default = 320 if model == "banking" else 220
+            max_assets = _int_env("SCAN_MAX_ASSETS_DEEP", deep_default)
+        else:
+            max_assets = _int_env("SCAN_MAX_ASSETS_SHALLOW", 30)
         # Hard upper concurrency guardrail requested for production-safe probing.
         concurrency = 50
-        tls_pass1_timeout_sec = _float_env("SCAN_TLS_PASS1_TIMEOUT_SEC", 4.5, min_value=1.0)
-        tls_pass2_timeout_sec = _float_env("SCAN_TLS_PASS2_TIMEOUT_SEC", 12.0, min_value=2.0)
-        tls_pass2_timeout_sec = max(10.0, min(15.0, tls_pass2_timeout_sec))
-        tls_pass2_concurrency = min(10, _int_env("SCAN_TLS_PASS2_CONCURRENCY", 10))
-        api_timeout_sec = _float_env("SCAN_API_TIMEOUT_SEC", 3.2, min_value=1.0)
-        service_probe_timeout_sec = _float_env("SCAN_SERVICE_PROBE_TIMEOUT_SEC", 3.5, min_value=1.0)
+        tls_pass1_timeout_sec = _float_env("SCAN_TLS_PASS1_TIMEOUT_SEC", 3.2, min_value=0.8)
+        tls_pass2_timeout_sec = _float_env("SCAN_TLS_PASS2_TIMEOUT_SEC", 7.0, min_value=1.5)
+        tls_pass2_timeout_sec = max(5.0, min(10.0, tls_pass2_timeout_sec))
+        tls_pass2_concurrency = min(16, _int_env("SCAN_TLS_PASS2_CONCURRENCY", 12))
+        api_timeout_sec = _float_env("SCAN_API_TIMEOUT_SEC", 2.1, min_value=0.8)
+        service_probe_timeout_sec = _float_env("SCAN_SERVICE_PROBE_TIMEOUT_SEC", 2.2, min_value=0.8)
+        pqc_timeout_sec = _float_env("SCAN_PQC_TIMEOUT_SEC", max(4.0, tls_pass2_timeout_sec), min_value=2.0)
         discovery_timeout_sec = _discovery_timeout_for_scan(deep_scan)
         ai_timeout_sec = _float_env("SCAN_AI_TIMEOUT_SEC", 0.9)
         log_every = _int_env("SCAN_PROGRESS_LOG_EVERY", 10)
@@ -394,7 +456,9 @@ async def run_scan_pipeline(
                 12,
             )
             try:
-                quick_timeout = max(15.0, discovery_timeout_sec * 0.5)
+                # Use a substantial second window so transient DNS/CT slowness
+                # does not force root-domain-only + heuristic fallback.
+                quick_timeout = max(45.0, discovery_timeout_sec * 0.8)
                 discovered_assets, vpn_signals, discovery_report = await asyncio.wait_for(
                     discover_assets_async(
                         domain,
@@ -499,6 +563,34 @@ async def run_scan_pipeline(
                         18,
                     )
 
+        # Option 1: include passive unresolved hosts directly in findings inventory.
+        # This preserves discovery visibility even when DNS answers are intermittently empty.
+        if os.getenv("SCAN_INCLUDE_PASSIVE_UNRESOLVED", "true").strip().lower() not in {"0", "false", "no"}:
+            passive_pool = {
+                str(host).strip().lower()
+                for host in (discovery_report.get("passive_discovered") or [])
+                if str(host).strip()
+            }
+            live_pool = {str(host).strip().lower() for host in discovered_assets if str(host).strip()}
+            unresolved = sorted(passive_pool - live_pool)
+            include_limit_default = 140 if deep_scan else 45
+            include_limit = _int_env("SCAN_PASSIVE_UNRESOLVED_LIMIT", include_limit_default)
+            include_unresolved = unresolved[: max(1, include_limit)]
+            if include_unresolved:
+                before = len(discovered_assets)
+                discovered_assets = sorted({*discovered_assets, *include_unresolved})
+                discovery_report["passive_unresolved_included"] = include_unresolved
+                _db_log(
+                    scan_id,
+                    (
+                        "[DISCOVERY] Included passive unresolved hosts for findings "
+                        f"({before} -> {len(discovered_assets)} assets, +{len(include_unresolved)} unresolved)"
+                    ),
+                    18,
+                )
+            else:
+                discovery_report["passive_unresolved_included"] = []
+
         tls_success_hosts = _historically_tls_successful_hosts(domain)
         prioritized_assets = _prioritize_assets(
             domain,
@@ -515,6 +607,19 @@ async def run_scan_pipeline(
                     + ", ".join(warm_hosts[:6])
                     + (" ..." if len(warm_hosts) > 6 else ""),
                     18,
+                )
+        
+        # Hybrid PQC infrastructure detection
+        if hybrid_pqc_discovery is not None and deep_scan:
+            pqc_candidates = get_hybrid_pqc_infrastructure_candidates(discovered_assets, min_score=25.0)
+            if pqc_candidates:
+                pqc_in_assets = [a for a in assets if a in pqc_candidates]
+                _db_log(
+                    scan_id,
+                    "[PQC-DISCOVERY] Identified hybrid PQC infrastructure candidates: "
+                    + ", ".join(pqc_in_assets[:8])
+                    + (f" ... ({len(pqc_candidates)} total)" if len(pqc_candidates) > 8 else f" ({len(pqc_candidates)} total)"),
+                    19,
                 )
         _db_log(
             scan_id,
@@ -536,6 +641,9 @@ async def run_scan_pipeline(
         discovery_bucket_payload = {
             "passive_discovered": len(set(discovery_report.get("passive_discovered") or [])),
             "live_dns": len(set(discovery_report.get("live_dns") or discovered_assets)),
+            "passive_unresolved_included": len(set(discovery_report.get("passive_unresolved_included") or [])),
+            "graph_nodes": int(discovery_report.get("graph_nodes") or 0),
+            "graph_edges": int(discovery_report.get("graph_edges") or 0),
             "live_tls_measured": 0,
         }
         _db_log(scan_id, f"[REPORT-BUCKETS] {json.dumps(discovery_bucket_payload, sort_keys=True)}", 21)
@@ -568,13 +676,14 @@ async def run_scan_pipeline(
                     tls_pass2_timeout_sec,
                     api_timeout_sec,
                     service_probe_timeout_sec,
+                    pqc_timeout_sec,
                 )
             )
             for asset in assets
         ]
 
         for idx, task in enumerate(asyncio.as_completed(tasks), start=1):
-            asset, tls, api, service_probes = await task
+            asset, tls, api, service_probes, pqc_result = await task
 
             key_exchange_status = classify_key_exchange(
                 tls.cipher_suite,
@@ -648,6 +757,16 @@ async def run_scan_pipeline(
                 "tls_unknown_reason": unknown_bucket,
                 "service_probe_ports": service_probes,
                 "service_reachable_non_443": service_reachable_non_443,
+                "pqc": pqc_result.model_dump() if hasattr(pqc_result, "model_dump") else pqc_result,
+                "pqc_status": getattr(getattr(pqc_result, "status", None), "value", None) or getattr(pqc_result, "status", None),
+                "pqc_negotiated_group": getattr(pqc_result, "negotiated_group", None),
+                "pqc_tls_version": getattr(pqc_result, "tls_version", None),
+                "pqc_provider": getattr(pqc_result, "provider", None),
+                "pqc_resolved_ip": getattr(pqc_result, "resolved_ip", None),
+                "pqc_cdn_headers_detected": list(getattr(pqc_result, "cdn_headers_detected", []) or []),
+                "pqc_asn_org": getattr(pqc_result, "asn_org", None),
+                "pqc_detection_method": getattr(pqc_result, "detection_method", None),
+                "pqc_error": getattr(pqc_result, "error", None),
             }
             with get_session() as session:
                 row = create_asset(
@@ -688,6 +807,14 @@ async def run_scan_pipeline(
         final_bucket_payload = {
             "passive_discovered": len(set(discovery_report.get("passive_discovered") or [])),
             "live_dns": len(set(discovery_report.get("live_dns") or discovered_assets)),
+            "passive_unresolved_included": len(set(discovery_report.get("passive_unresolved_included") or [])),
+            "graph_nodes": int(discovery_report.get("graph_nodes") or 0),
+            "graph_edges": int(discovery_report.get("graph_edges") or 0),
+            "ct_passive": sorted({str(x).strip().lower() for x in (discovery_report.get("ct_passive") or []) if str(x).strip()}),
+            "multi_vantage_passive": sorted({str(x).strip().lower() for x in (discovery_report.get("multi_vantage_passive") or []) if str(x).strip()}),
+            "cert_san_passive": sorted({str(x).strip().lower() for x in (discovery_report.get("cert_san_passive") or []) if str(x).strip()}),
+            "bfs_passive": sorted({str(x).strip().lower() for x in (discovery_report.get("bfs_passive") or []) if str(x).strip()}),
+            "bfs_live": sorted({str(x).strip().lower() for x in (discovery_report.get("bfs_live") or []) if str(x).strip()}),
             "live_tls_measured": sum(1 for row in packed_findings if _tls_measured(row["tls"])),
         }
         _db_log(scan_id, f"[REPORT-BUCKETS-FINAL] {json.dumps(final_bucket_payload, sort_keys=True)}", 90)

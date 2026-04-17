@@ -28,6 +28,11 @@ from ..models import TLSInfo
 from .cipher_database import get_cipher_metadata
 from .cipher_parser import parse_cipher_suite
 
+try:
+    from . import hybrid_pqc_discovery
+except Exception:  # pragma: no cover - optional hybrid PQC
+    hybrid_pqc_discovery = None
+
 TLS_PROBE_CONCURRENCY_LIMIT = 50
 SERVICE_PROBE_PORTS: tuple[int, ...] = (25, 465, 587, 993, 995, 8443, 9443)
 IMPLICIT_TLS_PORTS: set[int] = {465, 993, 995, 8443, 9443}
@@ -165,6 +170,20 @@ def _attach_cipher_context(info: TLSInfo) -> None:
             info.key_exchange_family = "classical"
     elif info.key_exchange_algorithm:
         info.key_exchange_family = "classical"
+    
+    # Hybrid PQC marker detection
+    if hybrid_pqc_discovery is not None:
+        # Detect PQC algorithm markers in openssl text  
+        openssl_text = f"{info.key_exchange_group or ''} {info.signature_algorithm or ''} {info.cipher_suite or ''}".upper()
+        info.hybrid_pqc_markers = hybrid_pqc_discovery.detect_hybrid_pqc_markers(openssl_text)
+        
+        # Score host for PQC adoption likelihood
+        adoption_score, adoption_reason = hybrid_pqc_discovery.score_host_for_hybrid_pqc(
+            info.host,
+            hybrid_pqc_markers=info.hybrid_pqc_markers if info.hybrid_pqc_markers else None
+        )
+        info.pqc_adoption_score = adoption_score
+        info.pqc_adoption_reason = adoption_reason
 
 
 def _build_context(permissive: bool = False) -> ssl.SSLContext:

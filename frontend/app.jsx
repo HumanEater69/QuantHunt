@@ -138,7 +138,14 @@ const Tooltip = RCH.Tooltip || (() => null);
 const Cell = RCH.Cell || (() => null);
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
-const LOCAL_API_FALLBACKS = ["http://127.0.0.1:8000", "http://localhost:8000"];
+const LOCAL_API_FALLBACKS = [
+  "http://127.0.0.1:8013",
+  "http://localhost:8013",
+  "http://127.0.0.1:8000",
+  "http://localhost:8000",
+  "http://127.0.0.1:8001",
+  "http://localhost:8001",
+];
 const PERSONALIZATION_USER_KEY = "quanthunt_persona_user_id";
 const sanitizeApiBase = (value) => String(value || "").trim().replace(/\/+$/, "");
 const isAbsoluteHttpApi = (value) => /^https?:\/\//i.test(sanitizeApiBase(value));
@@ -198,9 +205,10 @@ const resolveApiBase = () => {
   }
   if (window.location.protocol === "file:") return "http://127.0.0.1:8000";
   if (LOCAL_HOSTS.has(window.location.hostname)) {
-    return window.location.port === "8000"
-      ? ""
-      : `http://${window.location.hostname}:8000`;
+    if (window.location.port) {
+      return "";
+    }
+    return "http://127.0.0.1:8000";
   }
   const configuredApi = sanitizeApiBase(
     window.QUANTHUNT_CONFIG && window.QUANTHUNT_CONFIG.API_BASE,
@@ -233,6 +241,8 @@ const setRuntimeApiBase = (nextBase) => {
 };
 
 const SCAN_MODELS = ["general", "banking"];
+const FLEET_BACKEND_INSTANT_THRESHOLD = 5;
+const FLEET_MAX_DOMAINS = 350;
 const LOCAL_SCAN_ARCHIVE_KEY = "quanthunt_local_scan_archive_v1";
 const normalizeScanModel = (value) =>
   SCAN_MODELS.includes(String(value || "").toLowerCase())
@@ -3004,56 +3014,31 @@ function ScanOverlay({ domain, progress }) {
   const rawPct = Number(progress || 0);
   const pct = Number.isFinite(rawPct) ? rawPct : 0;
   const hasBackendProgress = pct > 1;
-  const [pulseTick, setPulseTick] = useState(0);
   const [displayedPct, setDisplayedPct] = useState(() => {
     if (hasBackendProgress) {
       return Math.max(1, Math.min(100, pct));
     }
-    return 6;
-  });
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setPulseTick((v) => (v + 1) % 8);
-    }, 420);
-    return () => clearInterval(id);
+    return 3;
   }, []);
 
   useEffect(() => {
     if (hasBackendProgress) {
       const next = Math.max(1, Math.min(100, pct));
-      setDisplayedPct((prev) => Math.max(prev, next));
+      setDisplayedPct((prev) => {
+        if (next >= prev) return next;
+        // Prevent visual jumps backwards while still staying backend-led.
+        return Math.max(next, prev - 0.6);
+      });
+      return;
     }
+
+    // If backend has not published progress yet, keep a short startup runway.
     const id = setInterval(() => {
       setDisplayedPct((prev) => {
-        const backendFloor = hasBackendProgress
-          ? Math.max(1, Math.min(100, pct))
-          : 0;
-        let next = Math.max(prev, backendFloor);
-
-        // Avoid visual freezes when backend emits sparse checkpoints.
-        // We trickle upward between checkpoints, but never near-complete.
-        if (backendFloor >= 100) return 100;
-        if (hasBackendProgress) {
-          const cap = Math.min(96, backendFloor + 20);
-          if (next < cap) {
-            if (next < 42) next += 0.78;
-            else if (next < 64) next += 0.44;
-            else if (next < 80) next += 0.22;
-            else next += 0.09;
-          }
-          return Math.min(cap, next);
-        }
-
-        // No backend progress yet: keep an active fallback ramp.
-        if (next < 32) return next + 1.35;
-        if (next < 52) return next + 0.72;
-        if (next < 68) return next + 0.34;
-        if (next < 80) return next + 0.15;
-        if (next < 88) return next + 0.07;
-        return next;
+        if (prev >= 14) return prev;
+        return prev + 0.9;
       });
-    }, 420);
+    }, 360);
     return () => clearInterval(id);
   }, [hasBackendProgress, pct]);
 
@@ -3096,7 +3081,14 @@ function ScanOverlay({ domain, progress }) {
             : "radial-gradient(circle at 19% 14%, rgba(227,192,113,0.3), transparent 40%), radial-gradient(circle at 82% 80%, rgba(143,197,164,0.24), transparent 46%)",
         }}
       />
-      <div className="qh-scan-overlay-liquid" />
+      <div
+        className="qh-scan-overlay-liquid"
+        style={{
+          background: dark
+            ? "radial-gradient(circle at 18% 26%, rgba(43,171,121,0.34), transparent 44%), radial-gradient(circle at 76% 74%, rgba(26,124,88,0.26), transparent 46%), linear-gradient(170deg, rgba(11,39,30,0.24), rgba(5,22,16,0.18))"
+            : "radial-gradient(circle at 18% 26%, rgba(235,192,102,0.38), transparent 44%), radial-gradient(circle at 76% 74%, rgba(209,157,58,0.26), transparent 46%), linear-gradient(170deg, rgba(255,242,205,0.22), rgba(248,231,183,0.18))",
+        }}
+      />
       <div
         className="qh-scan-overlay-grid"
         style={{ opacity: dark ? 0.7 : 0.62 }}
@@ -3123,16 +3115,16 @@ function ScanOverlay({ domain, progress }) {
           maxWidth: "92vw",
           borderRadius: 20,
           background: dark
-            ? "linear-gradient(154deg, rgba(53,42,24,0.84), rgba(41,32,18,0.8), rgba(25,38,30,0.72))"
-            : "linear-gradient(154deg, rgba(241,234,215,0.9), rgba(229,219,194,0.84), rgba(220,231,219,0.78))",
+            ? "linear-gradient(154deg, rgba(10,40,30,0.86), rgba(14,58,44,0.82), rgba(18,76,58,0.68))"
+            : "linear-gradient(154deg, rgba(255,247,225,0.92), rgba(244,226,182,0.88), rgba(232,208,142,0.78))",
           border: dark
-            ? "1px solid rgba(223,191,122,0.44)"
-            : "1px solid rgba(184,153,91,0.36)",
+            ? "1px solid rgba(103,214,168,0.38)"
+            : "1px solid rgba(194,152,73,0.42)",
           WebkitBackdropFilter: "blur(12px) saturate(1.14)",
           backdropFilter: "blur(12px) saturate(1.14)",
           boxShadow: dark
-            ? "14px 16px 34px rgba(13,10,6,0.56), -10px -10px 24px rgba(120,100,58,0.24), inset 0 1px 0 rgba(255,236,190,0.2)"
-            : "14px 16px 30px rgba(178,158,112,0.3), -10px -10px 24px rgba(255,251,239,0.9), inset 0 1px 0 rgba(255,255,251,0.9)",
+            ? "14px 16px 34px rgba(2,20,14,0.62), -10px -10px 24px rgba(44,148,111,0.2), inset 0 1px 0 rgba(196,255,227,0.22)"
+            : "14px 16px 30px rgba(152,112,34,0.28), -10px -10px 24px rgba(255,251,239,0.9), inset 0 1px 0 rgba(255,255,251,0.92)",
           padding: "18px 20px",
         }}
       >
@@ -3159,25 +3151,25 @@ function ScanOverlay({ domain, progress }) {
           <span
             className="qh-scan-stage-chip"
             style={{
-              color: dark ? "#ffe9b8" : "#7c5b20",
+              color: dark ? "#ddf4e8" : "#6d4f17",
               border: dark
-                ? "1px solid rgba(231,197,124,0.5)"
-                : "1px solid rgba(183,147,81,0.52)",
+                ? "1px solid rgba(108,221,173,0.44)"
+                : "1px solid rgba(197,156,78,0.52)",
               background: dark
-                ? "linear-gradient(145deg, rgba(140,108,45,0.44), rgba(116,88,36,0.24))"
-                : "linear-gradient(145deg, rgba(246,226,184,0.66), rgba(228,206,160,0.45))",
+                ? "linear-gradient(145deg, rgba(30,120,85,0.44), rgba(18,92,64,0.24))"
+                : "linear-gradient(145deg, rgba(245,219,155,0.7), rgba(224,190,116,0.48))",
             }}
           >
             {stageLabel}
           </span>
           <span
             style={{
-              color: dark ? "#dcc595" : "#8d7747",
+              color: dark ? "#dce8d9" : "#7d6531",
               fontFamily: "JetBrains Mono",
               fontSize: 10,
             }}
           >
-            telemetry pulse {pulseTick + 1}/8
+            backend sync live
           </span>
         </div>
         <div
@@ -3203,11 +3195,11 @@ function ScanOverlay({ domain, progress }) {
               overflow: "hidden",
               borderRadius: 999,
               background: dark
-                ? "linear-gradient(90deg, #ad8851, #d5b074, #78af88)"
-                : "linear-gradient(90deg, #c49a52, #e2c17f, #8fbc9b)",
+                ? "linear-gradient(90deg, #1d7a52, #34a87a, #77d4ac)"
+                : "linear-gradient(90deg, #b78628, #e2bf69, #f6dea8)",
               boxShadow: dark
-                ? "0 0 14px rgba(216,179,106,0.46)"
-                : "0 0 14px rgba(201,161,91,0.36)",
+                ? "0 0 15px rgba(65,201,147,0.48)"
+                : "0 0 15px rgba(205,163,77,0.42)",
               transition: "width 180ms ease",
             }}
           />
@@ -3260,6 +3252,8 @@ function ScannerTab({
   const archiveInFlightRef = useRef(new Set());
   const archiveSyncedRef = useRef(new Set());
   const lastProgressRef = useRef(0);
+  const singlePollInFlightRef = useRef(false);
+  const fleetPollInFlightRef = useRef(false);
 
   useEffect(() => {
     if (flashMessage) {
@@ -3297,36 +3291,25 @@ function ScannerTab({
     return counts;
   }, [scanData?.assets]);
 
-  useEffect(() => {
-    let alive = true;
-    if (scanId || polling || scanData?.scan?.scan_id) return () => {};
-
-    (async () => {
-      try {
-        const resp = await fetch(`${API}/api/scans?${scanModelParam(scanModel)}`);
-        if (!resp.ok) return;
-        const rows = await resp.json();
-        const completed = uniqueCompletedScansByDomain(
-          filterRowsByMode(rows, scanModel),
-        );
-        const latest = completed[0];
-        if (!alive || !latest?.scan_id) return;
-        const detail = await loadScanDetail(latest.scan_id);
-        if (!alive || !detail?.scan) return;
-        setFlashMessage({
-          type: "success",
-          durationMs: 4200,
-          text: `RESTORED LATEST COMPLETED SCAN: ${detail.scan.domain}`,
-        });
-      } catch {
-        // Keep the scanner usable even if the restore fetch fails.
-      }
-    })();
-
-    return () => {
-      alive = false;
+  const discoveryMetrics = useMemo(() => {
+    const buckets = scanData?.report_buckets || {};
+    const list = Array.isArray(scanData?.assets) ? scanData.assets : [];
+    const serviceReachableNon443 = list.filter((row) =>
+      Boolean(row?.service_reachable_non_443),
+    ).length;
+    return {
+      passiveDiscovered: Number(buckets?.passive_discovered || 0),
+      liveDns: Number(buckets?.live_dns || 0),
+      liveTlsMeasured: Number(buckets?.live_tls_measured || 0),
+      serviceReachableNon443,
     };
-  }, [scanModel, scanId, polling, scanData?.scan?.scan_id]);
+  }, [scanData?.report_buckets, scanData?.assets]);
+
+  useEffect(() => {
+    // Keep startup state clean: do not auto-load previous completed scans.
+    setScanData(null);
+    setScanId(null);
+  }, []);
 
   const computeHndlBreakdown = (list) => {
     const cat = {
@@ -3800,7 +3783,7 @@ function ScannerTab({
     setPolling(true);
 
     const requestedModel = effectiveScanModelForDomain(target, scanModel);
-    const deepScan = true; // Always use deep scan for all domains
+    const deepScan = true;
     if (requestedModel !== normalizeScanModel(scanModel)) {
       onAutoSwitchForDomain(target, requestedModel);
       setFlashMessage({
@@ -3837,7 +3820,7 @@ function ScannerTab({
 
     (async () => {
       try {
-        const deepScan = true; // Always use deep scan for all domains
+        const deepScan = true;
         await executeScan(pendingAutoScan.domain, pendingAutoScan.scan_model, deepScan);
       } finally {
         if (alive) onAutoScanConsumed();
@@ -3851,7 +3834,9 @@ function ScannerTab({
 
   useEffect(() => {
     if (!polling || !scanId) return;
-    const id = setInterval(async () => {
+    const pollSingle = async () => {
+      if (singlePollInFlightRef.current) return;
+      singlePollInFlightRef.current = true;
       try {
         const r = await fetch(`${API}/api/scan/${scanId}`);
         if (!r.ok) {
@@ -3906,10 +3891,15 @@ function ScannerTab({
         }
       } catch (e) {
         console.error("Polling error:", e);
+      } finally {
+        singlePollInFlightRef.current = false;
       }
       if (logRef.current)
         logRef.current.scrollTop = logRef.current.scrollHeight;
-    }, 1500);
+    };
+
+    pollSingle();
+    const id = setInterval(pollSingle, 900);
     return () => clearInterval(id);
   }, [polling, scanId]);
 
@@ -3983,7 +3973,9 @@ function ScannerTab({
   useEffect(() => {
     if (!fleetPolling || !fleetBatchScans.length) return;
 
-    const id = setInterval(async () => {
+    const pollFleet = async () => {
+      if (fleetPollInFlightRef.current) return;
+      fleetPollInFlightRef.current = true;
       try {
         const r = await fetch(`${API}/api/scan/batch/progress`, {
           method: "POST",
@@ -4021,11 +4013,7 @@ function ScannerTab({
 
         const backendInstant = String(d?.execution_mode || "interactive") === "backend_instant";
         const backendThreshold = Number(d?.backend_threshold ?? 5);
-        setFleetScans(
-          backendInstant
-            ? updatedAll.slice(0, Math.max(1, backendThreshold))
-            : updatedAll,
-        );
+        setFleetScans(updatedAll);
 
         setFleetAggregate({
           total: Number(d?.total ?? updatedAll.length),
@@ -4040,8 +4028,14 @@ function ScannerTab({
         if (!Boolean(d?.in_progress)) {
           setFleetPolling(false);
         }
-      } catch (_) {}
-    }, 1800);
+      } catch (_) {
+      } finally {
+        fleetPollInFlightRef.current = false;
+      }
+    };
+
+    pollFleet();
+    const id = setInterval(pollFleet, 1100);
 
     return () => clearInterval(id);
   }, [fleetPolling, fleetBatchScans, scanModel]);
@@ -4049,6 +4043,13 @@ function ScannerTab({
   const launchBatch = async () => {
     const domains = parseFleetDomains();
     if (!domains.length) return;
+    if (domains.length > FLEET_MAX_DOMAINS) {
+      setFlashMessage({
+        type: "error",
+        text: `Fleet scan accepts up to ${FLEET_MAX_DOMAINS} unique domains per run. Remove ${domains.length - FLEET_MAX_DOMAINS} domain(s) and retry.`,
+      });
+      return;
+    }
     const submitStamp = Date.now();
     const optimisticItems = domains.map((host, idx) => ({
       scan_id: `dispatch-${submitStamp}-${idx + 1}`,
@@ -4065,7 +4066,7 @@ function ScannerTab({
         ? FLEET_BACKEND_INSTANT_THRESHOLD
         : domains.length;
     setFleetBatchScans(optimisticItems);
-    setFleetScans(optimisticItems.slice(0, Math.max(1, optimisticThreshold)));
+    setFleetScans(optimisticItems);
     setFleetAggregate({
       total: optimisticItems.length,
       completed: 0,
@@ -4085,9 +4086,7 @@ function ScannerTab({
     const routedModels = domains.map((host) =>
       effectiveScanModelForDomain(host, scanModel),
     );
-    const allBanking = routedModels.every((model) => model === "banking");
-    const turboFleet = domains.length >= 40;
-    const desiredDeepScan = allBanking && !turboFleet;
+    const desiredDeepScan = true;
     const payload = {
       domains,
       scan_model: scanModel,
@@ -4152,7 +4151,7 @@ function ScannerTab({
     const executionMode = String(d?.execution_mode || "interactive");
     const backendInstant = executionMode === "backend_instant";
     const backendThreshold = Number(d?.backend_threshold ?? 5);
-    const effectiveDeepScan = Boolean(d?.effective_deep_scan ?? !turboFleet);
+    const effectiveDeepScan = Boolean(d?.effective_deep_scan ?? true);
     const autoShallowMode = Boolean(d?.auto_shallow_mode);
     const selectedModel = normalizeScanModel(scanModel);
     const autoSwitched = items.filter(
@@ -4193,21 +4192,16 @@ function ScannerTab({
       backendInstant,
     });
 
-    if (backendInstant) {
-      setFleetScans(mappedScans.slice(0, backendThreshold));
-      setFleetPolling(items.some((x) => x.status === "queued" || x.status === "running"));
-    } else {
-      setFleetScans(mappedScans);
-      setFleetPolling(
-        items.some((x) => x.status === "queued" || x.status === "running"),
-      );
-    }
+    setFleetScans(mappedScans);
+    setFleetPolling(
+      items.some((x) => x.status === "queued" || x.status === "running"),
+    );
 
     const modeLine = backendInstant
-      ? `BACKEND INSTANT MODE ACTIVE: ${items.length} domain(s) are processing server-side and persisted. Showing first ${Math.min(items.length, backendThreshold)} for quick view.`
+      ? `BACKEND INSTANT MODE ACTIVE: ${items.length} domain(s) are processing server-side and persisted.`
       : "";
     const depthLine = autoShallowMode
-      ? "FLEET TURBO MODE ACTIVE: deep scan auto-switched to shallow profile for fast startup and lower queue time."
+      ? "Fleet depth override applied by backend policy."
       : effectiveDeepScan
         ? "Fleet depth: deep profile."
         : "Fleet depth: shallow profile.";
@@ -4343,7 +4337,7 @@ function ScannerTab({
           subtitle="Use it to launch single or batch scans and monitor completion, posture score, and remediation outputs."
           bullets={[
             "Starts scan pipeline",
-            "Shows telemetry and progress",
+            "Shows backend-synced progress",
             "Downloads report and certificate",
           ]}
         />
@@ -4532,7 +4526,7 @@ function ScannerTab({
           Scan ID: {scanData?.scan?.scan_id || "-"} | API source:{" "}
           {API || "same-origin (/api)"} | Effective mode:{" "}
           {scanModelUiLabel(scanData?.scan?.scan_model || scanModel)} | Profile:{" "}
-          {scanData?.scan?.deep_scan ? "deep" : "quick"}
+          Enterprise PQC Mode
         </div>
 
         {!!scanData?.assets?.length && (
@@ -4549,6 +4543,94 @@ function ScannerTab({
             }}
           >
             Scanner posture snapshot: PASS {scannerPostureCounts.pass} | HYBRID {scannerPostureCounts.hybrid} | FAIL {scannerPostureCounts.fail}
+          </div>
+        )}
+
+        {(discoveryMetrics.passiveDiscovered > 0 ||
+          discoveryMetrics.liveDns > 0 ||
+          discoveryMetrics.liveTlsMeasured > 0 ||
+          discoveryMetrics.serviceReachableNon443 > 0) && (
+          <div
+            style={{
+              marginTop: 10,
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+              gap: 10,
+            }}
+          >
+            {[
+              {
+                title: "PASSIVE DISCOVERED",
+                value: discoveryMetrics.passiveDiscovered,
+                subtitle: "CT/passive (incl. dead)",
+              },
+              {
+                title: "LIVE DNS",
+                value: discoveryMetrics.liveDns,
+                subtitle: "Resolvable hostnames",
+              },
+              {
+                title: "LIVE TLS MEASURED",
+                value: discoveryMetrics.liveTlsMeasured,
+                subtitle: "Full TLS profile captured",
+              },
+              {
+                title: "SERVICE-REACHABLE (NON-443)",
+                value: discoveryMetrics.serviceReachableNon443,
+                subtitle: "TLS/STARTTLS reachable on alternate ports",
+              },
+            ].map((card) => (
+              <div
+                key={card.title}
+                style={{
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 16,
+                  padding: "12px 12px 10px",
+                  background: darkTheme
+                    ? "linear-gradient(145deg, rgba(30,44,36,0.54), rgba(17,28,23,0.48))"
+                    : "linear-gradient(145deg, rgba(255,248,228,0.9), rgba(237,245,233,0.82))",
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: "Orbitron",
+                    fontSize: 10,
+                    color: darkTheme ? "#9fdec1" : "#7b6331",
+                    marginBottom: 8,
+                    letterSpacing: 0.8,
+                  }}
+                >
+                  {card.title}
+                </div>
+                <div
+                  style={{
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 999,
+                    padding: "6px 10px",
+                    textAlign: "center",
+                    fontFamily: "Orbitron",
+                    fontSize: 28,
+                    lineHeight: 1,
+                    color: darkTheme ? "#d9efe2" : "#334f71",
+                    marginBottom: 8,
+                    background: darkTheme
+                      ? "rgba(15,28,22,0.54)"
+                      : "rgba(255,255,255,0.44)",
+                  }}
+                >
+                  {card.value}
+                </div>
+                <div
+                  style={{
+                    color: C.dim,
+                    fontFamily: "JetBrains Mono",
+                    fontSize: 10,
+                  }}
+                >
+                  {card.subtitle}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -11378,7 +11460,7 @@ function PQCLatencyTab({ scanModel = "general" }) {
               to mimic enterprise routing behavior.
             </div>
             <div>
-              - Model progression pass -> hybrid -> fail increases payload,
+              - Model progression pass -&gt; hybrid -&gt; fail increases payload,
               expected HRR overhead, and congestion-window pressure.
             </div>
             <div>
