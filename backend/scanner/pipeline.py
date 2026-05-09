@@ -36,6 +36,9 @@ from .asset_discovery import (
     score_assets_for_hybrid_pqc,
 )
 from .cbom_generator import build_cbom
+from .quanthunt_integration import integrate_quanthunt_discovery
+from .search_intelligence import SearchIntelligenceBridge, SearchEngine
+from .infra_expansion import InfrastructureExpander
 
 try:
     from . import hybrid_pqc_discovery
@@ -412,10 +415,10 @@ async def run_scan_pipeline(
 
         deep_scan = _load_scan_deep_mode(scan_id, default=True)
         if deep_scan:
-            deep_default = 320 if model == "banking" else 220
+            deep_default = 2200 if model == "banking" else 2000
             max_assets = _int_env("SCAN_MAX_ASSETS_DEEP", deep_default)
         else:
-            max_assets = _int_env("SCAN_MAX_ASSETS_SHALLOW", 30)
+            max_assets = _int_env("SCAN_MAX_ASSETS_SHALLOW", 800)
         # Hard upper concurrency guardrail requested for production-safe probing.
         concurrency = 50
         tls_pass1_timeout_sec = _float_env("SCAN_TLS_PASS1_TIMEOUT_SEC", 3.2, min_value=0.8)
@@ -432,13 +435,63 @@ async def run_scan_pipeline(
         has_external_ai = bool(os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
         ai_used = 0
 
-        _db_log(scan_id, f"[DISCOVERY] Starting asset discovery for {domain}", 5, status="running")
+        _db_log(scan_id, f"[ADVANCED-DISCOVERY] Starting concurrent advanced discovery for {domain}", 13, status="running")
         discovery_started = time.perf_counter()
+
+        domain_penalty = 0.0
+        domain_reward = 0.0
+        advanced_seed_words: list[str] = []
+        advanced_discovered_assets: set[str] = set()
+
+        async def run_si():
+            try:
+                bridge = SearchIntelligenceBridge(engines=[SearchEngine.GOOGLE])
+                return await asyncio.wait_for(bridge.execute(domain), timeout=25.0)
+            except Exception as e:
+                _db_log(scan_id, f"[SEARCH-INTEL] Skipped/Failed: {e}", 14)
+                return None
+
+        async def run_ie():
+            try:
+                expander = InfrastructureExpander()
+                return await asyncio.wait_for(expander.execute(domain, seed_ips=[]), timeout=35.0)
+            except Exception as e:
+                _db_log(scan_id, f"[INFRA-EXPAND] Skipped/Failed: {e}", 14)
+                return None
+
+        si_task = asyncio.create_task(run_si())
+        ie_task = asyncio.create_task(run_ie())
+
         try:
-            discovered_assets, vpn_signals, discovery_report = await asyncio.wait_for(
+            search_intel_report, infra_report = await asyncio.gather(si_task, ie_task)
+        except Exception as e:
+            _db_log(scan_id, f"[ADVANCED-DISCOVERY] Unexpected failure in gather: {e}", 14)
+            search_intel_report = None
+            infra_report = None
+
+        if search_intel_report:
+            domain_penalty = search_intel_report.total_penalty
+            advanced_discovered_assets.update(search_intel_report.discovered_subdomains)
+            advanced_discovered_assets.update(search_intel_report.discovered_urls)
+
+        if infra_report:
+            domain_reward = infra_report.infrastructure_reward
+            advanced_discovered_assets.update(infra_report.discovered_hostnames)
+            advanced_discovered_assets.update(infra_report.discovered_cert_domains)
+
+        for asset in advanced_discovered_assets:
+            if asset and "." in asset:
+                sub = asset.split(".")[0]
+                if sub and len(sub) > 1:
+                    advanced_seed_words.append(sub)
+
+        _db_log(scan_id, f"[DISCOVERY] Starting asset discovery for {domain} with {len(advanced_seed_words)} intel seeds", 5, status="running")
+        try:
+            discovered_assets_tuple = await asyncio.wait_for(
                 discover_assets_async(
                     domain,
                     include_vpn_probes=deep_scan,
+                    wordlist=advanced_seed_words,
                     dns_resolvers=dns_resolvers,
                     dns_doh_endpoints=dns_doh_endpoints,
                     dns_enable_doh=dns_enable_doh,
@@ -446,6 +499,8 @@ async def run_scan_pipeline(
                 ),
                 timeout=discovery_timeout_sec,
             )
+            discovered_assets, vpn_signals, discovery_report = discovered_assets_tuple
+
         except asyncio.TimeoutError:
             _db_log(
                 scan_id,
@@ -459,10 +514,11 @@ async def run_scan_pipeline(
                 # Use a substantial second window so transient DNS/CT slowness
                 # does not force root-domain-only + heuristic fallback.
                 quick_timeout = max(45.0, discovery_timeout_sec * 0.8)
-                discovered_assets, vpn_signals, discovery_report = await asyncio.wait_for(
+                discovered_assets_tuple = await asyncio.wait_for(
                     discover_assets_async(
                         domain,
                         include_vpn_probes=False,
+                        wordlist=advanced_seed_words,
                         dns_resolvers=dns_resolvers,
                         dns_doh_endpoints=dns_doh_endpoints,
                         dns_enable_doh=dns_enable_doh,
@@ -470,6 +526,7 @@ async def run_scan_pipeline(
                     ),
                     timeout=quick_timeout,
                 )
+                discovered_assets, vpn_signals, discovery_report = discovered_assets_tuple
                 _db_log(
                     scan_id,
                     (
@@ -510,9 +567,13 @@ async def run_scan_pipeline(
             _db_log(scan_id, f"[DISCOVERY] Failed with {ex}; using root domain fallback", 12)
         discovery_sec = time.perf_counter() - discovery_started
 
-        # If discovery visibility is restricted (e.g., private DNS), include heuristic candidates
+        # Inject advanced discovery assets into the final set
+        discovered_assets = sorted(list(set(discovered_assets) | advanced_discovered_assets))
+        discovery_report["passive_discovered"] = sorted(list(set(discovery_report.get("passive_discovered", [])) | advanced_discovered_assets))
+
+        # If discovery visibility is restricted (e.g., private DNS) or deep scan is enabled, include heuristic candidates
         # so the scan still surfaces a fuller inventory with explicit DNS/TLS failure reasons.
-        if len(discovered_assets) <= 1 and os.getenv("SCAN_INCLUDE_UNRESOLVED_CANDIDATES", "true").strip().lower() not in {"0", "false", "no"}:
+        if (len(discovered_assets) <= 1 or deep_scan) and os.getenv("SCAN_INCLUDE_UNRESOLVED_CANDIDATES", "true").strip().lower() not in {"0", "false", "no"}:
             railway_mode = _railway_hosted_mode()
             candidate_limit = _int_env("SCAN_UNRESOLVED_CANDIDATE_LIMIT", 480 if railway_mode else 120)
             passive_limit = _int_env("SCAN_PASSIVE_HEURISTIC_LIMIT", 84 if railway_mode else 21)
@@ -573,7 +634,7 @@ async def run_scan_pipeline(
             }
             live_pool = {str(host).strip().lower() for host in discovered_assets if str(host).strip()}
             unresolved = sorted(passive_pool - live_pool)
-            include_limit_default = 140 if deep_scan else 45
+            include_limit_default = 1000 if deep_scan else 400
             include_limit = _int_env("SCAN_PASSIVE_UNRESOLVED_LIMIT", include_limit_default)
             include_unresolved = unresolved[: max(1, include_limit)]
             if include_unresolved:
@@ -589,6 +650,8 @@ async def run_scan_pipeline(
                     18,
                 )
             else:
+                discovery_report["passive_unresolved_included"] = []
+
                 discovery_report["passive_unresolved_included"] = []
 
         tls_success_hosts = _historically_tls_successful_hosts(domain)
@@ -712,6 +775,8 @@ async def run_scan_pipeline(
                 cert_not_before=tls.cert_not_before,
                 cert_not_after=tls.cert_not_after,
                 cert_public_key_bits=tls.cert_public_key_bits,
+                domain_penalty=domain_penalty,
+                domain_reward=domain_reward,
             )
             label = decision_tree_label(tls, key_exchange_status)
             base_recs = recommendations_for_status(score, scan_model=model)

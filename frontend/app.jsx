@@ -205,9 +205,11 @@ const resolveApiBase = () => {
   }
   if (window.location.protocol === "file:") return "http://127.0.0.1:8000";
   if (LOCAL_HOSTS.has(window.location.hostname)) {
-    if (window.location.port) {
-      return "";
-    }
+    // When running the frontend on localhost (with or without a port), prefer
+    // an explicit configured API base if present. Otherwise point to the
+    // backend at port 8000 so the UI does not try to call the frontend origin.
+    const cfg = sanitizeApiBase(window.QUANTHUNT_CONFIG && window.QUANTHUNT_CONFIG.API_BASE);
+    if (isAbsoluteHttpApi(cfg)) return cfg;
     return "http://127.0.0.1:8000";
   }
   const configuredApi = sanitizeApiBase(
@@ -3236,6 +3238,7 @@ function ScannerTab({
   const [batch, setBatch] = useState("");
   const [formula, setFormula] = useState(null);
   const [flashMessage, setFlashMessage] = useState(null);
+  const [showQuanthuntFlash, setShowQuanthuntFlash] = useState(false);
   const [fleetScans, setFleetScans] = useState([]);
   const [fleetBatchScans, setFleetBatchScans] = useState([]);
   const [fleetPolling, setFleetPolling] = useState(false);
@@ -3300,6 +3303,7 @@ function ScannerTab({
     return {
       passiveDiscovered: Number(buckets?.passive_discovered || 0),
       liveDns: Number(buckets?.live_dns || 0),
+      internetHostnamesTested: Number(buckets?.internet_hostnames_tested || 0),
       liveTlsMeasured: Number(buckets?.live_tls_measured || 0),
       serviceReachableNon443,
     };
@@ -3683,10 +3687,12 @@ function ScannerTab({
     if (String(d?.status || "").toLowerCase() !== "completed") {
       setFlashMessage({
         type: "success",
-        durationMs: 4200,
+        mode: "internet",
+        durationMs: 12000,
         text:
-          `SCAN STARTED: ${target.toLowerCase()} ` +
-          `(${scanModelUiLabel(requestedModel)} mode, ${deepScan ? "deep" : "quick"} profile).`,
+          `Scanning via internet\n` +
+          `Passive OSINT, public DNS batching, and live validation are active.\n` +
+          `${target.toLowerCase()} is now under deep discovery in ${scanModelUiLabel(requestedModel)} mode.`,
       });
     }
     lastProgressRef.current = Math.max(
@@ -3770,6 +3776,8 @@ function ScannerTab({
     setDomain(target);
 
     // Optimistic UI: show full-tab scanning overlay instantly on click.
+    setShowQuanthuntFlash(true);
+    setTimeout(() => setShowQuanthuntFlash(false), 5000); // 5 sec flash
     setScanData((prev) => ({
       ...(prev || {}),
       scan: {
@@ -4257,6 +4265,7 @@ function ScannerTab({
   const currentMode = normalizeScanModel(scanModel);
   const darkTheme = isDarkTheme();
   const flashFloating = Boolean(flashMessage?.centered || polling);
+  const internetFlash = flashMessage?.mode === "internet";
   const inModeFleetScans = fleetScans.filter(
     (item) => normalizeScanModel(item.scan_model || scanModel) === currentMode,
   );
@@ -4442,14 +4451,22 @@ function ScannerTab({
               zIndex: flashFloating ? 3200 : undefined,
               minWidth: flashFloating ? "min(86vw, 780px)" : undefined,
               maxWidth: flashFloating ? "86vw" : undefined,
-              background:
-                flashMessage.type === "error"
-                  ? "linear-gradient(145deg, rgba(145,0,20,0.42), rgba(100,0,10,0.3))"
+              background: flashMessage.type === "error"
+                ? "linear-gradient(145deg, rgba(145,0,20,0.42), rgba(100,0,10,0.3))"
+                : internetFlash
+                  ? darkTheme
+                    ? "linear-gradient(145deg, rgba(6, 95, 70, 0.88), rgba(4, 47, 46, 0.82))"
+                    : "linear-gradient(145deg, rgba(255,255,255,0.82), rgba(226,252,239,0.72))"
                   : flashFloating
                     ? "linear-gradient(145deg, rgba(121,95,42,0.78), rgba(72,111,82,0.68))"
                     : "rgba(40,167,69,0.15)",
-              border: `1px solid ${flashMessage.type === "error" ? C.red : C.green}`,
-              color: flashMessage.type === "error" ? C.red : darkTheme ? "#f2e3ba" : "#755522",
+              backgroundImage: internetFlash
+                ? darkTheme
+                  ? "linear-gradient(120deg, rgba(255,255,255,0.16), transparent 36%), radial-gradient(circle at 12% 18%, rgba(52, 211, 153, 0.28), transparent 0 30%), radial-gradient(circle at 86% 12%, rgba(167, 243, 208, 0.18), transparent 0 25%), linear-gradient(145deg, rgba(6, 95, 70, 0.88), rgba(4, 47, 46, 0.82))"
+                  : "linear-gradient(120deg, rgba(255,255,255,0.72), transparent 38%), radial-gradient(circle at 12% 18%, rgba(255,255,255,0.7), transparent 0 30%), radial-gradient(circle at 84% 12%, rgba(16, 185, 129, 0.18), transparent 0 24%), linear-gradient(145deg, rgba(255,255,255,0.82), rgba(226,252,239,0.72))"
+                : undefined,
+              border: `1px solid ${flashMessage.type === "error" ? C.red : internetFlash ? (darkTheme ? "rgba(110, 231, 183, 0.72)" : "rgba(16, 185, 129, 0.58)") : C.green}`,
+              color: flashMessage.type === "error" ? C.red : internetFlash ? (darkTheme ? "#ecfdf5" : "#064e3b") : darkTheme ? "#f2e3ba" : "#755522",
               padding: "12px 16px",
               borderRadius: 13,
               marginBottom: 16,
@@ -4464,13 +4481,17 @@ function ScannerTab({
               boxShadow: flashFloating
                 ? flashMessage.type === "error"
                   ? "0 22px 55px rgba(60,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.14)"
-                  : "0 18px 44px rgba(16,46,35,0.42), inset 0 1px 0 rgba(255,255,255,0.16)"
+                  : internetFlash
+                    ? darkTheme
+                      ? "0 24px 60px rgba(0, 90, 64, 0.52), 0 0 0 1px rgba(110,231,183,0.08), inset 0 1px 0 rgba(255,255,255,0.22)"
+                      : "0 24px 60px rgba(16, 185, 129, 0.24), 0 0 0 1px rgba(255,255,255,0.54), inset 0 1px 0 rgba(255,255,255,0.72)"
+                    : "0 18px 44px rgba(16,46,35,0.42), inset 0 1px 0 rgba(255,255,255,0.16)"
                 : undefined,
               animation: "qhPulseNotice 2s ease-in-out infinite",
             }}
           >
             <span style={{ fontSize: 16, marginTop: flashMessage.centered ? 2 : 0 }}>
-              {flashMessage.type === "error" ? "!" : "+"}
+              {flashMessage.type === "error" ? "!" : internetFlash ? "NET" : "+"}
             </span>
             <span style={{ whiteSpace: "pre-line" }}>{flashMessage.text}</span>
           </div>
@@ -4494,6 +4515,156 @@ function ScannerTab({
             {polling ? "SCANNING..." : "SCAN"}
           </Btn>
         </div>
+        {showQuanthuntFlash && (
+          <div
+            style={{
+              position: "fixed",
+              top: 22,
+              right: 22,
+              pointerEvents: "none",
+              zIndex: 9999,
+              minWidth: 340,
+              maxWidth: "min(92vw, 420px)",
+              borderRadius: 22,
+              overflow: "hidden",
+              animation: "qhNetSlideIn 0.55s cubic-bezier(0.16, 1, 0.3, 1), qhNetFloat 3.4s ease-in-out 0.55s infinite",
+            }}
+          >
+            {/* Animated gradient border layer */}
+            <div style={{
+              position: "absolute", inset: 0, borderRadius: 22, padding: 1.5, zIndex: 0,
+              background: darkTheme
+                ? "linear-gradient(135deg, rgba(16,185,129,0.72), rgba(52,211,153,0.48), rgba(6,95,70,0.62), rgba(110,231,183,0.56))"
+                : "linear-gradient(135deg, rgba(217,171,78,0.82), rgba(245,208,118,0.6), rgba(180,139,45,0.72), rgba(253,230,138,0.66))",
+              backgroundSize: "300% 300%",
+              WebkitAnimation: "qhNetBorderShift 4s ease-in-out infinite",
+              animation: "qhNetBorderShift 4s ease-in-out infinite",
+            }}>
+              <div style={{
+                width: "100%", height: "100%", borderRadius: 21,
+                background: darkTheme
+                  ? "linear-gradient(154deg, rgba(6,42,32,0.96), rgba(4,30,24,0.94))"
+                  : "linear-gradient(154deg, rgba(255,251,237,0.97), rgba(254,243,215,0.95))",
+              }} />
+            </div>
+            {/* Main glass body */}
+            <div style={{
+              position: "relative", zIndex: 1,
+              padding: "18px 22px 16px",
+              borderRadius: 22,
+              background: darkTheme
+                ? "linear-gradient(154deg, rgba(6,60,46,0.88), rgba(4,47,36,0.82), rgba(8,72,54,0.68))"
+                : "linear-gradient(154deg, rgba(255,250,233,0.92), rgba(254,240,200,0.88), rgba(252,224,154,0.72))",
+              backdropFilter: "blur(28px) saturate(1.5)",
+              WebkitBackdropFilter: "blur(28px) saturate(1.5)",
+              boxShadow: darkTheme
+                ? "18px 18px 36px rgba(2,18,14,0.7), -8px -8px 20px rgba(52,211,153,0.16), inset 0 1px 0 rgba(167,243,208,0.28), inset 0 -1px 0 rgba(0,0,0,0.2), 0 0 40px rgba(16,185,129,0.12)"
+                : "18px 18px 36px rgba(160,120,40,0.22), -8px -8px 20px rgba(255,252,244,0.92), inset 0 2px 0 rgba(255,255,255,0.95), inset 0 -1px 0 rgba(180,140,50,0.12), 0 0 40px rgba(217,171,78,0.1)",
+              display: "flex", alignItems: "center", gap: 14,
+            }}>
+              {/* Liquid inner glow orbs */}
+              <div style={{ position: "absolute", inset: 0, borderRadius: 22, pointerEvents: "none", overflow: "hidden" }}>
+                <div style={{
+                  position: "absolute", width: 120, height: 120, borderRadius: "50%",
+                  top: -30, left: -20, filter: "blur(28px)",
+                  background: darkTheme ? "rgba(52,211,153,0.2)" : "rgba(253,224,71,0.25)",
+                  animation: "qhNetGlowDrift 4.5s ease-in-out infinite",
+                }} />
+                <div style={{
+                  position: "absolute", width: 80, height: 80, borderRadius: "50%",
+                  bottom: -15, right: -10, filter: "blur(22px)",
+                  background: darkTheme ? "rgba(110,231,183,0.15)" : "rgba(245,208,118,0.2)",
+                  animation: "qhNetGlowDrift 5.2s ease-in-out 0.8s infinite alternate",
+                }} />
+              </div>
+              {/* Signal indicator orb */}
+              <div style={{ position: "relative", width: 38, height: 38, flexShrink: 0 }}>
+                <div style={{
+                  position: "absolute", inset: 0, borderRadius: "50%",
+                  background: darkTheme
+                    ? "linear-gradient(135deg, rgba(16,185,129,0.92), rgba(52,211,153,0.72))"
+                    : "linear-gradient(135deg, rgba(217,171,78,0.95), rgba(245,208,118,0.8))",
+                  boxShadow: darkTheme
+                    ? "0 0 18px rgba(52,211,153,0.55), inset 0 1px 0 rgba(255,255,255,0.25)"
+                    : "0 0 18px rgba(217,171,78,0.45), inset 0 1px 0 rgba(255,255,255,0.75)",
+                  animation: "qhNetPulse 2.2s ease-in-out infinite",
+                }} />
+                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {[0,1,2].map(i => (
+                    <div key={i} style={{
+                      width: 4, height: 4, borderRadius: "50%", margin: "0 1.5px",
+                      background: darkTheme ? "#d1fae5" : "#fffbeb",
+                      opacity: 0.9,
+                      animation: `qhNetDotBounce 1.4s ease-in-out ${i * 0.18}s infinite`,
+                    }} />
+                  ))}
+                </div>
+              </div>
+              {/* Text content */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "Orbitron, JetBrains Mono, monospace",
+                  fontSize: 11, fontWeight: 700, letterSpacing: 1.4,
+                  textTransform: "uppercase",
+                  color: darkTheme ? "#a7f3d0" : "#92400e",
+                  marginBottom: 3,
+                }}>
+                  Internet Connected
+                </div>
+                <div style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 11.5, fontWeight: 600, lineHeight: 1.45,
+                  color: darkTheme ? "#d1fae5" : "#78350f",
+                }}>
+                  Scanning via internet — enhanced asset discovery active
+                </div>
+                <div style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 9.5, marginTop: 4,
+                  color: darkTheme ? "rgba(167,243,208,0.62)" : "rgba(120,53,15,0.55)",
+                  letterSpacing: 0.3,
+                }}>
+                  Passive OSINT · DNS batching · Live TLS validation
+                </div>
+              </div>
+              {/* Status dot */}
+              <div style={{
+                position: "absolute", top: 8, right: 10,
+                width: 6, height: 6, borderRadius: "50%",
+                background: darkTheme ? "rgba(110,231,183,0.45)" : "rgba(217,171,78,0.42)",
+                animation: "qhNetPulse 2s ease-in-out 0.3s infinite",
+              }} />
+            </div>
+            <style>{`
+              @keyframes qhNetSlideIn {
+                0% { transform: translateX(120%) scale(0.92); opacity: 0; }
+                60% { transform: translateX(-3%) scale(1.01); opacity: 1; }
+                100% { transform: translateX(0) scale(1); opacity: 1; }
+              }
+              @keyframes qhNetFloat {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-3px); }
+              }
+              @keyframes qhNetBorderShift {
+                0% { background-position: 0% 50%; }
+                50% { background-position: 100% 50%; }
+                100% { background-position: 0% 50%; }
+              }
+              @keyframes qhNetPulse {
+                0%, 100% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.08); opacity: 0.82; }
+              }
+              @keyframes qhNetGlowDrift {
+                0%, 100% { transform: translate(0, 0); opacity: 0.7; }
+                50% { transform: translate(12px, 8px); opacity: 1; }
+              }
+              @keyframes qhNetDotBounce {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-3px); }
+              }
+            `}</style>
+          </div>
+        )}
         <div
           style={{
             marginTop: 10,
@@ -4548,6 +4719,7 @@ function ScannerTab({
 
         {(discoveryMetrics.passiveDiscovered > 0 ||
           discoveryMetrics.liveDns > 0 ||
+          discoveryMetrics.internetHostnamesTested > 0 ||
           discoveryMetrics.liveTlsMeasured > 0 ||
           discoveryMetrics.serviceReachableNon443 > 0) && (
           <div
@@ -4563,6 +4735,11 @@ function ScannerTab({
                 title: "PASSIVE DISCOVERED",
                 value: discoveryMetrics.passiveDiscovered,
                 subtitle: "CT/passive (incl. dead)",
+              },
+              {
+                title: "INTERNET HOSTNAMES TESTED",
+                value: discoveryMetrics.internetHostnamesTested,
+                subtitle: "Zero-API DNS + web candidates",
               },
               {
                 title: "LIVE DNS",
@@ -9358,6 +9535,7 @@ function PQCLatencyTab({ scanModel = "general" }) {
   const [remoteMetrics, setRemoteMetrics] = useState(null);
   const [remoteError, setRemoteError] = useState("");
   const [isScanning, setIsScanning] = useState(false);
+  const [showQuanthuntFlash, setShowQuanthuntFlash] = useState(false);
   const [networkStatus, setNetworkStatus] = useState(null);
   const [exportingFleetCsv, setExportingFleetCsv] = useState(false);
   const [exportingAllScenarios, setExportingAllScenarios] = useState(false);
@@ -11545,6 +11723,10 @@ function App() {
   const [scanModel, setScanModel] = useState("general");
   const [modeFxTick, setModeFxTick] = useState(0);
   const [modeFlash, setModeFlash] = useState(null);
+  const [networkFlash, setNetworkFlash] = useState(null);
+  const [browserOnline, setBrowserOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine !== false,
+  );
   const [pendingAutoScan, setPendingAutoScan] = useState(null);
   const [networkStatus, setNetworkStatus] = useState({
     ip: "unknown",
@@ -11572,22 +11754,117 @@ function App() {
     window.matchMedia &&
     window.matchMedia("(pointer: coarse)").matches;
   const vpnOverlayActive = Boolean(networkStatus?.blocked);
+  const unlockedRef = useRef(unlocked);
+  const networkSignatureRef = useRef(null);
   const tabOrder = useMemo(
     () => new Map(TABS.map(([id], idx) => [id, idx])),
     [],
   );
 
-  const refreshNetworkStatus = () => {
+  const showNetworkFlash = ({ tone = "ok", title, text, durationMs = 7200 }) => {
+    setNetworkFlash({
+      tone,
+      title,
+      text,
+      durationMs,
+      key: Date.now(),
+    });
+  };
+
+  const makeNetworkSignature = (status, backendConnected, online) =>
+    [
+      online ? "online" : "offline",
+      backendConnected ? "backend-up" : "backend-down",
+      status?.blocked ? "blocked" : "open",
+      status?.vpn_detected ? "vpn" : "no-vpn",
+      status?.permissible ? "permissible" : "restricted",
+    ].join("|");
+
+  const announceNetworkState = (status, backendConnected, online, options = {}) => {
+    const signature = makeNetworkSignature(status, backendConnected, online);
+    const previous = networkSignatureRef.current;
+    networkSignatureRef.current = signature;
+    if (!unlockedRef.current && !options.forceFlash) return;
+    if (!options.forceFlash && previous === signature) return;
+
+    if (!online) {
+      showNetworkFlash({
+        tone: "error",
+        title: "NETWORK OFFLINE",
+        text: "Browser network connection is offline. Scans and live status checks are paused until connectivity returns.",
+      });
+      return;
+    }
+    if (!backendConnected) {
+      showNetworkFlash({
+        tone: "error",
+        title: "APP CONNECTION LOST",
+        text: `Frontend is online, but the QuantHunt backend is unreachable at ${API || "same-origin /api"}.`,
+      });
+      return;
+    }
+    if (status?.blocked) {
+      showNetworkFlash({
+        tone: "warning",
+        title: "NETWORK BLOCKED",
+        text: status?.reason || status?.message || "VPN or proxy path detected. Disable it before continuing.",
+      });
+      return;
+    }
+    if (status?.vpn_detected) {
+      showNetworkFlash({
+        tone: "warning",
+        title: "VPN DETECTED",
+        text: status?.permissible
+          ? "Network check passed with a permissible VPN or privacy relay path."
+          : "VPN or proxy path detected. Some app actions may be restricted.",
+      });
+      return;
+    }
+    showNetworkFlash({
+      tone: "ok",
+      title: "APP NETWORK CONNECTED",
+      text: `Backend connected through ${API || "same-origin /api"}. Live network checks are active.`,
+    });
+  };
+
+  const refreshNetworkStatus = (options = {}) => {
+    const online = typeof navigator === "undefined" ? true : navigator.onLine !== false;
+    setBrowserOnline(online);
+    if (!online) {
+      const offlineStatus = {
+        ip: "unknown",
+        vpn_detected: false,
+        blocked: false,
+        permissible: true,
+        reason: "",
+        score: 0,
+        message: "Browser network offline",
+      };
+      setNetworkStatus(offlineStatus);
+      setBackendConnection({
+        connected: false,
+        checkedAt: Date.now(),
+        apiSource: API || "same-origin (/api)",
+      });
+      announceNetworkState(offlineStatus, false, false, options);
+      return;
+    }
     fetch(`${API}/api/network-status`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!d) {
+          const fallbackStatus = {
+            ...(networkStatus || {}),
+            message: "Backend network check failed",
+          };
           setBackendConnection((prev) => ({
             ...prev,
             connected: false,
             checkedAt: Date.now(),
             apiSource: API || "same-origin (/api)",
           }));
+          announceNetworkState(fallbackStatus, false, true, options);
           return;
         }
         setNetworkStatus(d);
@@ -11596,9 +11873,10 @@ function App() {
           checkedAt: Date.now(),
           apiSource: API || "same-origin (/api)",
         });
+        announceNetworkState(d, true, true, options);
       })
       .catch(() => {
-        setNetworkStatus({
+        const fallbackStatus = {
           ip: "unknown",
           vpn_detected: false,
           blocked: false,
@@ -11606,12 +11884,14 @@ function App() {
           reason: "",
           score: 0,
           message: "Network check unavailable",
-        });
+        };
+        setNetworkStatus(fallbackStatus);
         setBackendConnection({
           connected: false,
           checkedAt: Date.now(),
           apiSource: API || "same-origin (/api)",
         });
+        announceNetworkState(fallbackStatus, false, true, options);
       });
   };
 
@@ -11632,6 +11912,7 @@ function App() {
     setScanModel("general");
     setModeFxTick(0);
     setModeFlash(null);
+    setNetworkFlash(null);
     setPendingAutoScan(null);
   };
 
@@ -11674,6 +11955,10 @@ function App() {
   const consumePendingAutoScan = () => setPendingAutoScan(null);
 
   useEffect(() => {
+    unlockedRef.current = unlocked;
+  }, [unlocked]);
+
+  useEffect(() => {
     const id = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
@@ -11681,10 +11966,27 @@ function App() {
   useEffect(() => {
     refreshNetworkStatus();
     const id = setInterval(refreshNetworkStatus, 30000);
+    const handleOnline = () => {
+      setBrowserOnline(true);
+      refreshNetworkStatus({ forceFlash: true });
+    };
+    const handleOffline = () => {
+      setBrowserOnline(false);
+      refreshNetworkStatus({ forceFlash: true });
+    };
+    addEventListener("online", handleOnline);
+    addEventListener("offline", handleOffline);
     return () => {
       clearInterval(id);
+      removeEventListener("online", handleOnline);
+      removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    refreshNetworkStatus({ forceFlash: true });
+  }, [unlocked]);
 
   useEffect(() => {
     const onResize = () => {
@@ -11709,6 +12011,15 @@ function App() {
     return () => clearTimeout(id);
   }, [modeFlash]);
 
+  useEffect(() => {
+    if (!networkFlash) return;
+    const id = setTimeout(
+      () => setNetworkFlash(null),
+      Number(networkFlash.durationMs || 7200),
+    );
+    return () => clearTimeout(id);
+  }, [networkFlash]);
+
   applyTheme(theme);
   if (!unlocked)
     return (
@@ -11732,6 +12043,108 @@ function App() {
         position: "relative",
       }}
     >
+      {networkFlash && (
+        <div
+          key={networkFlash.key}
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            left: "50%",
+            top: isMobileWidth ? 12 : 18,
+            transform: "translateX(-50%)",
+            zIndex: 5000,
+            width: isMobileWidth ? "calc(100vw - 24px)" : "min(680px, calc(100vw - 32px))",
+            borderRadius: 16,
+            padding: "12px 14px",
+            display: "grid",
+            gridTemplateColumns: "auto 1fr",
+            gap: 10,
+            alignItems: "center",
+            pointerEvents: "none",
+            border:
+              networkFlash.tone === "error"
+                ? "1px solid rgba(196, 92, 104, 0.68)"
+                : networkFlash.tone === "warning"
+                  ? "1px solid rgba(211, 171, 86, 0.68)"
+                  : "1px solid rgba(101, 190, 143, 0.68)",
+            background:
+              networkFlash.tone === "error"
+                ? theme === "dark"
+                  ? "linear-gradient(155deg, rgba(88, 38, 46, 0.92), rgba(54, 26, 32, 0.88))"
+                  : "linear-gradient(155deg, rgba(255, 236, 238, 0.94), rgba(239, 206, 211, 0.9))"
+                : networkFlash.tone === "warning"
+                  ? theme === "dark"
+                    ? "linear-gradient(155deg, rgba(91, 70, 28, 0.92), rgba(58, 45, 22, 0.88))"
+                    : "linear-gradient(155deg, rgba(255, 246, 216, 0.95), rgba(236, 218, 171, 0.9))"
+                  : theme === "dark"
+                    ? "linear-gradient(155deg, rgba(32, 86, 63, 0.92), rgba(24, 57, 45, 0.88))"
+                    : "linear-gradient(155deg, rgba(230, 247, 238, 0.95), rgba(200, 230, 214, 0.9))",
+            color:
+              theme === "dark"
+                ? "#f2f8f0"
+                : networkFlash.tone === "error"
+                  ? "#74313c"
+                  : networkFlash.tone === "warning"
+                    ? "#6d5117"
+                    : "#24563f",
+            boxShadow:
+              "0 18px 36px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.32)",
+            backdropFilter: "blur(16px) saturate(1.16)",
+            WebkitBackdropFilter: "blur(16px) saturate(1.16)",
+            animation: "networkFlashIn 420ms cubic-bezier(0.22, 1, 0.36, 1)",
+          }}
+        >
+          <div
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 999,
+              display: "grid",
+              placeItems: "center",
+              fontFamily: "Orbitron",
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: 0.6,
+              color: theme === "dark" ? "#102016" : "#ffffff",
+              background:
+                networkFlash.tone === "error"
+                  ? C.red
+                  : networkFlash.tone === "warning"
+                    ? C.yellow
+                    : C.green,
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.36)",
+            }}
+          >
+            NET
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontFamily: "Orbitron",
+                fontSize: isMobileWidth ? 11 : 12,
+                fontWeight: 800,
+                letterSpacing: 0.8,
+                textTransform: "uppercase",
+              }}
+            >
+              {networkFlash.title}
+            </div>
+            <div
+              style={{
+                marginTop: 4,
+                fontFamily: "JetBrains Mono",
+                fontSize: isMobileWidth ? 10 : 11,
+                lineHeight: 1.45,
+                opacity: 0.92,
+              }}
+            >
+              {networkFlash.text}
+            </div>
+          </div>
+        </div>
+      )}
+      <style>{`@keyframes networkFlashIn{0%{opacity:0;transform:translateX(-50%) translateY(-14px) scale(.98);filter:blur(4px)}100%{opacity:1;transform:translateX(-50%) translateY(0) scale(1);filter:blur(0)}}`}</style>
       <div
         style={{
           display: "grid",
@@ -12062,6 +12475,16 @@ function App() {
                     ? "DETECTED (PERMISSIBLE)"
                     : "DETECTED"
                   : "NOT DETECTED"}
+            </div>
+            <div
+              style={{
+                marginTop: 2,
+                fontFamily: "JetBrains Mono",
+                fontSize: 10,
+                color: browserOnline ? C.green : C.red,
+              }}
+            >
+              BROWSER: {browserOnline ? "ONLINE" : "OFFLINE"}
             </div>
             <div
               style={{

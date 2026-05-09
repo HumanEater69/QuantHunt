@@ -31,6 +31,9 @@ from .crud import (
     append_chain_block,
     assemble_scan_payload,
     add_log,
+    create_asset,
+    add_crypto_finding,
+    add_recommendation,
     create_scan as create_scan_record,
     findings_payload,
     leaderboard_payload,
@@ -70,11 +73,12 @@ from .scanner import run_scan_pipeline
 from .scanner.asset_discovery import bootstrap_historical_dns_cache
 from .scanner.tls_inspector import inspect_tls_async
 from .tasks import run_scan_task
+from .quanthunt_engine import run_quanthunt_scan
 from .tables import Asset, Base, CbomExport, ChainBlock, Scan
 
 
 def _cors_origins_from_env() -> list[str]:
-    default_origins = ["http://127.0.0.1:8000", "http://localhost:8000"]
+    default_origins = ["http://127.0.0.1:8000", "http://localhost:8000", "http://127.0.0.1:8011", "http://localhost:8011"]
     raw = os.getenv("CORS_ALLOW_ORIGINS", ",".join(default_origins)).strip()
     allow_insecure = os.getenv("ALLOW_INSECURE_CORS", "false").lower() == "true"
     if raw == "*" and allow_insecure:
@@ -1872,6 +1876,11 @@ async def vpn_access_guard(request: Request, call_next):
     return Response(content=html, media_type="text/html", status_code=403)
 
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "backend": "connected"}
+
+
 @app.get("/api/network-status")
 async def network_status(request: Request) -> dict[str, object]:
     ip = _client_ip_from_request(request)
@@ -2522,6 +2531,114 @@ async def create_scan(req: ScanRequest) -> dict[str, str | bool | int]:
         return payload
     finally:
         reset_active_scan_model(token)
+
+
+
+@app.post("/api/scan/quick-engine")
+async def quick_engine_scan(req: ScanRequest, persist: bool = Query(False)) -> JSONResponse:
+    """Run the pure-algorithmic QuantHunt engine directly and return the engine JSON output.
+
+    This does not create DB records or integrate with the pipeline; it's a lightweight, direct invocation
+    useful for quick assessments or comparison with the main pipeline.
+    """
+    domain_in = _normalize_domain(req.domain)
+    if not _is_valid_scan_domain(domain_in):
+        raise HTTPException(status_code=400, detail="Invalid domain")
+    # call the standalone engine
+    out_str = await run_quanthunt_scan(domain_in)
+    try:
+        data = json.loads(out_str)
+    except Exception:
+        # return raw output if not JSON
+        return JSONResponse(content={"raw": out_str})
+
+    if not persist:
+        return JSONResponse(content=data)
+
+    # Persist results into DB as a new scan record
+    token = set_active_scan_model(DEFAULT_SCAN_MODEL)
+    try:
+        with get_session() as session:
+            scan = create_scan_record(session, domain_in, deep_scan=req.deep_scan)
+            set_scan_state(session, scan.scan_id, "running", progress=0)
+
+            # Add assets from engine's `pqc_posture_data` payload
+            for entry in data.get("pqc_posture_data", []):
+                host = str(entry.get("host") or "").strip()
+                if not host:
+                    continue
+                ip = entry.get("ip")
+                tls_version = entry.get("tls_version") or entry.get("tls") or None
+                cipher = entry.get("cipher") or entry.get("cipher_suite") or None
+                key_alg = entry.get("key_alg") or entry.get("key_exchange") or None
+                metadata = {"tls": {"tls_version": tls_version, "cipher": cipher, "cert_public_key_algo": key_alg, "resolved_ip": ip, "tls_measured": True}}
+                # default risk score for quick persistence; pipeline may re-evaluate later
+                try:
+                    risk_score = float(entry.get("hndl_risk_score") or entry.get("risk_score") or 50.0)
+                except Exception:
+                    risk_score = 50.0
+                asset_obj = create_asset(
+                    session,
+                    scan.scan_id,
+                    host,
+                    tls_version,
+                    cipher,
+                    risk_score,
+                    "quick-engine",
+                    metadata,
+                )
+
+                # Map engine metadata to CryptoFinding entries
+                algo = (key_alg or cipher or "").strip()
+                algo_upper = algo.upper()
+                if not algo:
+                    status = "WARNING"
+                elif any(x in algo_upper for x in ["ML-KEM", "KYBER", "DILITHIUM", "SPHINCS", "MLDSA", "ML-DSA"]):
+                    status = "SAFE"
+                elif any(x in algo_upper for x in ["ECDSA", "ECDH", "ECD" ]):
+                    status = "ACCEPTABLE"
+                elif "RSA" in algo_upper:
+                    status = "ACCEPTABLE"
+                else:
+                    status = "WARNING"
+
+                # certificate signature / key-exchange finding
+                try:
+                    add_crypto_finding(
+                        session,
+                        scan.scan_id,
+                        asset_obj.id,
+                        "certificate",
+                        algo,
+                        status,
+                        details=json.dumps({"ip": ip, "tls_version": tls_version, "cipher": cipher}),
+                    )
+                except Exception:
+                    pass
+
+                # Add a recommendation for non-safe algorithms
+                try:
+                    if status != "SAFE":
+                        text = (
+                            f"Consider upgrading key exchange or certificate to a PQC-capable primitive; detected: {algo or 'unknown'}."
+                        )
+                        add_recommendation(session, scan.scan_id, asset_obj.id, text, phase="Phase 1")
+                except Exception:
+                    pass
+
+            # Attach a final report-buckets log for UI aggregation
+            try:
+                metrics = data.get("metrics") or {}
+                add_log(session, scan.scan_id, f"[REPORT-BUCKETS-FINAL] {json.dumps(metrics)}")
+            except Exception:
+                pass
+
+            set_scan_state(session, scan.scan_id, "completed", progress=100)
+            payload = assemble_scan_payload(session, scan.scan_id)
+    finally:
+        reset_active_scan_model(token)
+
+    return JSONResponse(content=payload)
 
 
 @app.post("/api/scan/batch-progress")

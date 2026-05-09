@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+httpx
+sqlalchemy
+psycopg[binary]
+alembic
+pytest
+aiohttp
+aiodns
+cryptography
+supabase

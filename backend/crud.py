@@ -334,6 +334,7 @@ def _extract_report_buckets_from_logs(logs: list[ScanLog]) -> dict[str, object]:
         "passive_unresolved_included": 0,
         "graph_nodes": 0,
         "graph_edges": 0,
+        "internet_hostnames_tested": 0,
         "live_tls_measured": 0,
     }
     list_defaults = {

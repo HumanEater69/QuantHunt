@@ -60,7 +60,7 @@ def _railway_hosted_mode() -> bool:
     )
 
 
-MAX_BRUTEFORCE_WORDS = 2500 if _railway_hosted_mode() else 5000
+MAX_BRUTEFORCE_WORDS = 2500 if _railway_hosted_mode() else 10000
 
 # Preserve legacy target-specific coverage when historical wordlists were saved
 # under an older hostname spelling.
@@ -1255,7 +1255,7 @@ async def discover_from_dns_bruteforce(
     if not domain_l:
         return set()
 
-    max_words = max(64, int(os.getenv("SCAN_DNS_MAX_CANDIDATES", "1000")))
+    max_words = max(64, int(os.getenv("SCAN_DNS_MAX_CANDIDATES", "4000")))
     if max_candidates is not None:
         max_words = max(64, int(max_candidates))
     if wordlist is None:
@@ -1353,12 +1353,12 @@ async def discover_assets_async(
         wave_2_limit = max(260, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "700")))
         wave_3_limit = max(220, int(os.getenv("SCAN_DNS_WAVE3_WORD_LIMIT", "500")))
     else:
-        wave_1_limit = max(160, int(os.getenv("SCAN_DNS_WAVE1_WORD_LIMIT", "260")))
-        wave_2_limit = max(140, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "220")))
-        wave_3_limit = max(120, int(os.getenv("SCAN_DNS_WAVE3_WORD_LIMIT", "180")))
+        wave_1_limit = max(160, int(os.getenv("SCAN_DNS_WAVE1_WORD_LIMIT", "4000")))
+        wave_2_limit = max(140, int(os.getenv("SCAN_DNS_WAVE2_WORD_LIMIT", "3000")))
+        wave_3_limit = max(120, int(os.getenv("SCAN_DNS_WAVE3_WORD_LIMIT", "2000")))
 
     initial_words = _rank_words(
-        _expand_seed_words({*explicit_words, *ct_seed_words, *history_tokens, *get_bootstrap_dns_tokens()}),
+        _expand_seed_words({*explicit_words, *ct_seed_words, *history_tokens, *get_bootstrap_dns_tokens(), *_load_wordlist(domain_l)}),
         limit=wave_1_limit,
     )[:wave_1_limit]
 

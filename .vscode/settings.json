@@ -1,0 +1,12 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^uvicorn backend\\.main:app --reload --port 8000$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^& \\.venv\\\\Scripts\\\\python\\.exe test_quanthunt_integration\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

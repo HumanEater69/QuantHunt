@@ -250,6 +250,8 @@ def hndl_score(
     cert_not_before: str | None = None,
     cert_not_after: str | None = None,
     cert_public_key_bits: int | None = None,
+    domain_penalty: float = 0.0,
+    domain_reward: float = 0.0,
 ) -> float:
     cipher_up = (cipher_suite or "").upper()
 
@@ -323,6 +325,8 @@ def hndl_score(
         + (cert_validity_score * 0.15)
         + (tls_proto_score * 0.15)
     )
+
+    score = score + domain_penalty + domain_reward
 
     return round(min(max(score, 0.0), 100.0), 2)
 

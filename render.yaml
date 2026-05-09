@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: quanthunt-api
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: BANKING_DATABASE_URL
+        sync: false
+      - key: CORS_ALLOW_ORIGINS
+        sync: false
+      - key: USE_CELERY
+        value: "false"
+      - key: SINGLE_FORCE_RUNNING_ON_SUBMIT
+        value: "true"
+      - key: FLEET_FORCE_RUNNING_ON_SUBMIT
+        value: "true"
+      - key: FLEET_FORCE_ASYNCIO_DISPATCH
+        value: "true"
+      - key: VPN_ENFORCE_BLOCK
+        value: "false"
+
+  - type: worker
+    name: quanthunt-supabase-worker
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m backend.supabase_worker
+    autoDeploy: true
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: QUANTHUNT_WORKER_POLL_SECONDS
+        value: "8"

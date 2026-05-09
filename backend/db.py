@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from contextvars import ContextVar, Token
 from contextlib import contextmanager
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -37,12 +38,31 @@ def set_active_scan_model(scan_model: str) -> Token:
 def reset_active_scan_model(token: Token) -> None:
     _ACTIVE_SCAN_MODEL.reset(token)
 
+def normalize_database_url(url: str) -> str:
+    """Accept Supabase/Render Postgres URLs and make them SQLAlchemy-ready."""
+    value = str(url or "").strip()
+    if value.startswith("postgres://"):
+        value = "postgresql://" + value[len("postgres://") :]
+    if value.startswith("postgresql://") and not value.startswith("postgresql+"):
+        value = "postgresql+psycopg://" + value[len("postgresql://") :]
+
+    if value.startswith("postgresql+psycopg://") and "sslmode=" not in value:
+        parts = urlsplit(value)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query.setdefault("sslmode", "require")
+        value = urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+        )
+    return value
+
 def _build_engine(url: str):
+    normalized_url = normalize_database_url(url)
     return create_engine(
-        url,
+        normalized_url,
         echo=False,
         future=True,
-        connect_args={"check_same_thread": False} if url.startswith("sqlite") else {},
+        pool_pre_ping=True,
+        connect_args={"check_same_thread": False} if normalized_url.startswith("sqlite") else {},
     )
 
 ENGINES = {model: _build_engine(url) for model, url in DATABASE_URLS.items()}
