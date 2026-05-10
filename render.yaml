@@ -10,9 +10,11 @@ services:
       - key: PORT
         value: "10000"
       - key: DATABASE_URL
-        sync: false
+        value: "postgresql://postgres:8YWXsxj84%21%233%234m1b%5EZ%25@db.wqhhuafnlykwpyktgats.supabase.co:5432/postgres"
       - key: BANKING_DATABASE_URL
-        sync: false
+        value: "postgresql://postgres:8YWXsxj84%21%233%234m1b%5EZ%25@db.wqhhuafnlykwpyktgats.supabase.co:5432/postgres"
+      - key: SUPABASE_URL
+        value: "https://wqhhuafnlykwpyktgats.supabase.co"
       - key: CORS_ALLOW_ORIGINS
         sync: false
       - key: USE_CELERY
