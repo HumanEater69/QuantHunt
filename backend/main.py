@@ -1824,8 +1824,11 @@ async def scan_coverage_audit_expected_json(
 
 @app.on_event("startup")
 def startup() -> None:
+    print("[Startup] Initializing application...", flush=True)
     for model, db_engine in get_all_engines().items():
+        print(f"[Startup] Connecting to database for model: {model}...", flush=True)
         Base.metadata.create_all(bind=db_engine)
+        print(f"[Startup] Database connection successful for: {model}.", flush=True)
         
         # Enable WAL mode for SQLite to improve concurrent access
         if db_engine.url.drivername == "sqlite":

@@ -4,9 +4,11 @@ services:
     env: python
     plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port 10000
     autoDeploy: true
     envVars:
+      - key: PORT
+        value: "10000"
       - key: DATABASE_URL
         sync: false
       - key: BANKING_DATABASE_URL
