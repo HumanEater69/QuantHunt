@@ -97,6 +97,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+async def _keepalive_task():
+    port = os.environ.get("PORT", "8000")
+    url = f"http://127.0.0.1:{port}/api/health"
+    while True:
+        try:
+            await asyncio.sleep(14)
+            async with httpx.AsyncClient() as client:
+                await client.get(url, timeout=5.0)
+                print(f"[Keepalive] Pinged {url}")
+        except Exception as e:
+            print(f"[Keepalive] Error pinging {url}: {e}")
+
+@app.on_event("startup")
+async def start_keepalive():
+    if os.getenv("RENDER") == "true" or os.getenv("KEEP_ALIVE") == "true":
+        asyncio.create_task(_keepalive_task())
 
 def _railway_hosted_mode() -> bool:
     return any(

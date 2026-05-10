@@ -92,11 +92,11 @@ def _float_env(name: str, default: float, min_value: float = 0.1) -> float:
 
 def _discovery_timeout_for_scan(deep_scan: bool) -> float:
     railway_mode = _railway_hosted_mode()
-    base_timeout = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 45.0 if railway_mode else 20.0)
+    base_timeout = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 240.0 if railway_mode else 180.0)
     if not deep_scan:
         return base_timeout
     # Deep scans need a wider CT/DNS window to avoid dropping into root-only fallback.
-    deep_default = 75.0 if railway_mode else 75.0
+    deep_default = 480.0 if railway_mode else 360.0
     return _float_env("SCAN_DISCOVERY_TIMEOUT_SEC_DEEP", max(base_timeout, deep_default))
 
 
