@@ -9,3 +9,5 @@ aiohttp
 aiodns
 cryptography
 supabase
+reportlab
+celery
