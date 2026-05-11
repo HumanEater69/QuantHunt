@@ -11,3 +11,4 @@ cryptography
 supabase
 reportlab
 celery
+beautifulsoup4
