@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 
 from .celery_app import celery_app
-from .scanner.pipeline import run_scan_pipeline
 
 @celery_app.task(name="quantumshield.run_scan")
 def run_scan_task(
@@ -14,6 +13,8 @@ def run_scan_task(
     dns_doh_endpoints: list[str] | None = None,
     dns_enable_doh: bool | None = None,
 ) -> str:
+    from .scanner.pipeline import run_scan_pipeline
+
     asyncio.run(
         run_scan_pipeline(
             scan_id,

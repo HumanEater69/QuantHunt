@@ -55,7 +55,7 @@ from .pqc_engine import (
     hndl_score,
     recommendations_for_status,
 )
-from quanthunt.discover.pqc_probe import probe_pqc
+from .pqc_probe import probe_pqc
 from .tls_inspector import inspect_tls_async, probe_service_ports_async
 
 
@@ -379,7 +379,7 @@ async def _scan_asset_bounded(
                 timeout=max(pqc_timeout_sec + 1.0, pqc_timeout_sec),
             )
         except Exception as ex:
-            from quanthunt.models import PQCResult, PQCStatus
+            from ..models import PQCResult, PQCStatus
 
             pqc_result = PQCResult(
                 hostname=asset,

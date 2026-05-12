@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -69,6 +70,28 @@ class NetworkHintsRequest(BaseModel):
 
 class ExpectedHostsAuditJsonRequest(BaseModel):
     expected_hosts: list[str] = Field(default_factory=list)
+
+
+class PQCStatus(str, Enum):
+    PASS = "PASS"
+    HYBRID = "HYBRID"
+    FAIL = "FAIL"
+    ERROR = "ERROR"
+
+
+class PQCResult(BaseModel):
+    hostname: str
+    port: int
+    status: PQCStatus
+    negotiated_group: str | None = None
+    tls_version: str | None = None
+    provider: str | None = None
+    resolved_ip: str | None = None
+    cdn_headers_detected: list[str] = Field(default_factory=list)
+    asn_org: str | None = None
+    detection_method: str = "fallback"
+    error: str | None = None
+    raw_openssl_output: str | None = None
 
 class TLSInfo(BaseModel):
     host: str

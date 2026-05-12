@@ -69,10 +69,8 @@ from .reporting import (
     certificate_readiness_label,
     readiness_label,
 )
-from .scanner import run_scan_pipeline
 from .scanner.asset_discovery import bootstrap_historical_dns_cache
 from .scanner.tls_inspector import inspect_tls_async
-from .tasks import run_scan_task
 from .quanthunt_engine import run_quanthunt_scan
 from .tables import Asset, Base, CbomExport, ChainBlock, Scan
 
@@ -839,6 +837,8 @@ def _dispatch_scan_pipeline_in_thread(
     dns_doh_endpoints: list[str] | None,
     dns_enable_doh: bool | None,
 ) -> None:
+    from .scanner.pipeline import run_scan_pipeline
+
     asyncio.run(
         run_scan_pipeline(
             scan_id,
@@ -2527,6 +2527,8 @@ async def create_scan(req: ScanRequest) -> dict[str, str | bool | int]:
             "scan_model": scan_model,
         }
         if USE_CELERY:
+            from .tasks import run_scan_task
+
             run_scan_task.delay(
                 scan_id,
                 domain,
@@ -3036,6 +3038,8 @@ async def create_batch_scan(req: BatchScanRequest) -> dict:
     )
     for scan_id, domain, model in queued:
         if USE_CELERY and not bypass_celery_for_fleet:
+            from .tasks import run_scan_task
+
             run_scan_task.delay(
                 scan_id,
                 domain,
