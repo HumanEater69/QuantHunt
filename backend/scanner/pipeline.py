@@ -92,11 +92,11 @@ def _float_env(name: str, default: float, min_value: float = 0.1) -> float:
 
 def _discovery_timeout_for_scan(deep_scan: bool) -> float:
     railway_mode = _railway_hosted_mode()
-    base_timeout = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 240.0 if railway_mode else 180.0)
+    base_timeout = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 120.0 if railway_mode else 90.0)
     if not deep_scan:
         return base_timeout
     # Deep scans need a wider CT/DNS window to avoid dropping into root-only fallback.
-    deep_default = 480.0 if railway_mode else 360.0
+    deep_default = 180.0 if railway_mode else 150.0
     return _float_env("SCAN_DISCOVERY_TIMEOUT_SEC_DEEP", max(base_timeout, deep_default))
 
 
@@ -415,7 +415,7 @@ async def run_scan_pipeline(
 
         deep_scan = _load_scan_deep_mode(scan_id, default=True)
         if deep_scan:
-            deep_default = 2200 if model == "banking" else 2000
+            deep_default = 800 if model == "banking" else 600
             max_assets = _int_env("SCAN_MAX_ASSETS_DEEP", deep_default)
         else:
             max_assets = _int_env("SCAN_MAX_ASSETS_SHALLOW", 800)
@@ -446,7 +446,7 @@ async def run_scan_pipeline(
         async def run_si():
             try:
                 bridge = SearchIntelligenceBridge(engines=[SearchEngine.GOOGLE])
-                return await asyncio.wait_for(bridge.execute(domain), timeout=25.0)
+                return await asyncio.wait_for(bridge.execute(domain), timeout=10.0)
             except Exception as e:
                 _db_log(scan_id, f"[SEARCH-INTEL] Skipped/Failed: {e}", 14)
                 return None
@@ -454,7 +454,7 @@ async def run_scan_pipeline(
         async def run_ie():
             try:
                 expander = InfrastructureExpander()
-                return await asyncio.wait_for(expander.execute(domain, seed_ips=[]), timeout=35.0)
+                return await asyncio.wait_for(expander.execute(domain, seed_ips=[]), timeout=14.0)
             except Exception as e:
                 _db_log(scan_id, f"[INFRA-EXPAND] Skipped/Failed: {e}", 14)
                 return None
@@ -634,7 +634,7 @@ async def run_scan_pipeline(
             }
             live_pool = {str(host).strip().lower() for host in discovered_assets if str(host).strip()}
             unresolved = sorted(passive_pool - live_pool)
-            include_limit_default = 1000 if deep_scan else 400
+            include_limit_default = 250 if deep_scan else 120
             include_limit = _int_env("SCAN_PASSIVE_UNRESOLVED_LIMIT", include_limit_default)
             include_unresolved = unresolved[: max(1, include_limit)]
             if include_unresolved:
