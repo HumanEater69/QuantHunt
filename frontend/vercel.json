@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://quanthunt-seven.onrender.com/api/$1"
+      "destination": "https://quanthunt-terminal.onrender.com/api/$1"
     },
     {
       "source": "/(.*)",
