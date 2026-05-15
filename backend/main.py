@@ -1896,6 +1896,7 @@ async def vpn_access_guard(request: Request, call_next):
 
 
 @app.get("/health")
+@app.get("/api/health")
 async def health_check():
     return {"status": "ok", "backend": "connected"}
 
