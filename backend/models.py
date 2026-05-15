@@ -156,3 +156,58 @@ class ScanState(BaseModel):
     findings: list[AssetFinding] = Field(default_factory=list)
     cbom: dict[str, Any] | None = None
     error: str | None = None
+
+
+class FleetScanBatchRequest(BaseModel):
+    """Batch request to scan multiple domains concurrently with fleet settings."""
+    domains: list[str]
+    deep_scan: bool = True
+    scan_model: Literal["general", "banking"] = "general"
+    concurrent_scans: int = 5  # Number of parallel scans
+    timeout_per_domain: int = 300  # Seconds per domain
+    include_certificate_export: bool = True
+    include_report_download: bool = True
+    dns_resolvers: list[str] | None = None
+
+
+class FleetScanStatus(BaseModel):
+    """Status of a single domain in fleet scan."""
+    domain: str
+    scan_id: str | None = None
+    status: Literal["queued", "running", "completed", "failed"] = "queued"
+    progress: int = 0
+    error: str | None = None
+    discovered_assets_count: int = 0
+    critical_findings: int = 0
+
+
+class FleetScanBatchStatus(BaseModel):
+    """Overall status of fleet batch scan."""
+    batch_id: str
+    total_domains: int
+    completed: int = 0
+    failed: int = 0
+    in_progress: int = 0
+    overall_progress: int = 0
+    scans: list[FleetScanStatus] = Field(default_factory=list)
+    status: Literal["queued", "running", "completed", "failed"] = "queued"
+    created_at: str = Field(default_factory=now_iso)
+    completed_at: str | None = None
+
+
+class CertificateExportRequest(BaseModel):
+    """Request to export certificate data for batch of domains."""
+    scan_ids: list[str] | None = None
+    domains: list[str] | None = None
+    format: Literal["csv", "json", "pem"] = "csv"
+    include_full_chain: bool = True
+
+
+class ReportDownloadRequest(BaseModel):
+    """Request to download scan reports."""
+    scan_ids: list[str] | None = None
+    domains: list[str] | None = None
+    format: Literal["pdf", "json", "html", "csv"] = "pdf"
+    include_findings: bool = True
+    include_recommendations: bool = True
+    include_cbom: bool = True

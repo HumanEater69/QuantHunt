@@ -92,11 +92,11 @@ def _float_env(name: str, default: float, min_value: float = 0.1) -> float:
 
 def _discovery_timeout_for_scan(deep_scan: bool) -> float:
     railway_mode = _railway_hosted_mode()
-    base_timeout = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 120.0 if railway_mode else 90.0)
+    base_timeout = _float_env("SCAN_DISCOVERY_TIMEOUT_SEC", 180.0 if railway_mode else 150.0)  # Increased from 120/90
     if not deep_scan:
         return base_timeout
     # Deep scans need a wider CT/DNS window to avoid dropping into root-only fallback.
-    deep_default = 180.0 if railway_mode else 150.0
+    deep_default = 300.0 if railway_mode else 240.0  # Increased from 180/150 for comprehensive discovery
     return _float_env("SCAN_DISCOVERY_TIMEOUT_SEC_DEEP", max(base_timeout, deep_default))
 
 
@@ -415,19 +415,19 @@ async def run_scan_pipeline(
 
         deep_scan = _load_scan_deep_mode(scan_id, default=True)
         if deep_scan:
-            deep_default = 800 if model == "banking" else 600
+            deep_default = 3000 if model == "banking" else 2500  # Increased from 800/600
             max_assets = _int_env("SCAN_MAX_ASSETS_DEEP", deep_default)
         else:
-            max_assets = _int_env("SCAN_MAX_ASSETS_SHALLOW", 800)
+            max_assets = _int_env("SCAN_MAX_ASSETS_SHALLOW", 2000)  # Increased from 800
         # Hard upper concurrency guardrail requested for production-safe probing.
         concurrency = 50
-        tls_pass1_timeout_sec = _float_env("SCAN_TLS_PASS1_TIMEOUT_SEC", 3.2, min_value=0.8)
-        tls_pass2_timeout_sec = _float_env("SCAN_TLS_PASS2_TIMEOUT_SEC", 7.0, min_value=1.5)
-        tls_pass2_timeout_sec = max(5.0, min(10.0, tls_pass2_timeout_sec))
-        tls_pass2_concurrency = min(16, _int_env("SCAN_TLS_PASS2_CONCURRENCY", 12))
-        api_timeout_sec = _float_env("SCAN_API_TIMEOUT_SEC", 2.1, min_value=0.8)
-        service_probe_timeout_sec = _float_env("SCAN_SERVICE_PROBE_TIMEOUT_SEC", 2.2, min_value=0.8)
-        pqc_timeout_sec = _float_env("SCAN_PQC_TIMEOUT_SEC", max(4.0, tls_pass2_timeout_sec), min_value=2.0)
+        tls_pass1_timeout_sec = _float_env("SCAN_TLS_PASS1_TIMEOUT_SEC", 2.8, min_value=0.8)  # Reduced from 3.2 for faster discovery
+        tls_pass2_timeout_sec = _float_env("SCAN_TLS_PASS2_TIMEOUT_SEC", 6.5, min_value=1.5)  # Reduced from 7.0
+        tls_pass2_timeout_sec = max(5.0, min(12.0, tls_pass2_timeout_sec))  # Increased max from 10.0 to 12.0
+        tls_pass2_concurrency = min(24, _int_env("SCAN_TLS_PASS2_CONCURRENCY", 18))  # Increased from 16 to 24
+        api_timeout_sec = _float_env("SCAN_API_TIMEOUT_SEC", 1.8, min_value=0.8)  # Reduced from 2.1
+        service_probe_timeout_sec = _float_env("SCAN_SERVICE_PROBE_TIMEOUT_SEC", 2.0, min_value=0.8)  # Reduced from 2.2
+        pqc_timeout_sec = _float_env("SCAN_PQC_TIMEOUT_SEC", max(3.5, tls_pass2_timeout_sec), min_value=2.0)  # Reduced from 4.0
         discovery_timeout_sec = _discovery_timeout_for_scan(deep_scan)
         ai_timeout_sec = _float_env("SCAN_AI_TIMEOUT_SEC", 0.9)
         log_every = _int_env("SCAN_PROGRESS_LOG_EVERY", 10)

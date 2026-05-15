@@ -3188,6 +3188,86 @@ async def batch_scan_progress(req: BatchProgressRequest) -> dict:
     }
 
 
+# ============================================================================
+# BATCH FLEET SCANNING & REPORTING ENDPOINTS
+# ============================================================================
+
+@app.post("/api/scan/fleet-batch")
+async def post_fleet_batch(req) -> dict[str, str]:
+    """Initiate batch fleet scan of multiple domains concurrently."""
+    from .fleet_endpoints import batch_fleet_scan
+    from .models import FleetScanBatchRequest
+    
+    if not isinstance(req, FleetScanBatchRequest):
+        req = FleetScanBatchRequest(**req.dict() if hasattr(req, "dict") else req)
+    
+    return await batch_fleet_scan(req)
+
+
+@app.get("/api/scan/fleet-batch/{batch_id}")
+async def get_fleet_batch(batch_id: str):
+    """Get status of a fleet batch scan."""
+    from .fleet_endpoints import get_fleet_batch_status
+    
+    return await get_fleet_batch_status(batch_id)
+
+
+@app.post("/api/scan/certificates/export")
+async def post_certificate_export(req):
+    """Export certificates from scans in requested format."""
+    from .fleet_endpoints import export_certificates
+    from .models import CertificateExportRequest
+    
+    if not isinstance(req, CertificateExportRequest):
+        req = CertificateExportRequest(**req.dict() if hasattr(req, "dict") else req)
+    
+    return await export_certificates(req)
+
+
+@app.post("/api/scan/reports/download")
+async def post_report_download(req):
+    """Download scan reports in requested format (json, csv, pdf, html)."""
+    from .fleet_endpoints import download_reports
+    from .models import ReportDownloadRequest
+    
+    if not isinstance(req, ReportDownloadRequest):
+        req = ReportDownloadRequest(**req.dict() if hasattr(req, "dict") else req)
+    
+    return await download_reports(req)
+
+
+@app.get("/api/scan/{scan_id}/report-download")
+async def download_scan_report(scan_id: str, format: str = Query("pdf")) -> StreamingResponse:
+    """Download a single scan report."""
+    from .fleet_endpoints import download_reports
+    from .models import ReportDownloadRequest
+    
+    req = ReportDownloadRequest(
+        scan_ids=[scan_id],
+        format=format,  # type: ignore
+        include_findings=True,
+        include_recommendations=True,
+        include_cbom=True,
+    )
+    
+    return await download_reports(req)
+
+
+@app.get("/api/scan/{scan_id}/certificate-export")
+async def download_certificates(scan_id: str, format: str = Query("csv")) -> StreamingResponse:
+    """Download certificates for a single scan."""
+    from .fleet_endpoints import export_certificates
+    from .models import CertificateExportRequest
+    
+    req = CertificateExportRequest(
+        scan_ids=[scan_id],
+        format=format,  # type: ignore
+        include_full_chain=True,
+    )
+    
+    return await export_certificates(req)
+
+
 @app.get("/api/leaderboard")
 async def leaderboard(scan_model: str = Query(DEFAULT_SCAN_MODEL)) -> list[dict]:
     model = _assert_scan_model(scan_model)

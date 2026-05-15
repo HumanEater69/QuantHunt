@@ -60,7 +60,7 @@ def _railway_hosted_mode() -> bool:
     )
 
 
-MAX_BRUTEFORCE_WORDS = 2500 if _railway_hosted_mode() else 10000
+MAX_BRUTEFORCE_WORDS = 8000 if _railway_hosted_mode() else 25000  # Increased limits for comprehensive discovery
 
 # Preserve legacy target-specific coverage when historical wordlists were saved
 # under an older hostname spelling.
@@ -86,34 +86,49 @@ def _discover_hosts_from_certificate_sans(domain: str, passive_hosts: Iterable[s
     }
 
 DEFAULT_WORDLIST: list[str] = [
-    "mail",
-    "vpn",
-    "api",
-    "dev",
-    "secure",
-    "portal",
-    "banking",
-    "www",
-    "auth",
-    "login",
-    "sso",
-    "mfa",
-    "gateway",
-    "admin",
-    "mobile",
-    "app",
-    "web",
-    "payments",
-    "pay",
-    "cards",
-    "loan",
-    "support",
-    "status",
-    "cdn",
-    "edge",
-    "uat",
-    "staging",
-    "test",
+    # Core infrastructure
+    "www", "mail", "ftp", "smtp", "imap", "pop3",
+    # Security & Access
+    "vpn", "secure", "auth", "login", "sso", "mfa", "gateway", "admin", "portal",
+    "ssl", "tls", "cert", "pki", "kms", "hsm",
+    # Banking & Financial
+    "banking", "bank", "ibanking", "netbanking", "kioskbanking", "mbs", "hrms",
+    "cards", "card", "payments", "pay", "loan", "loans", "credit", "debit",
+    "transaction", "account", "customer", "retail", "corporate",
+    "swift", "ach", "eft", "wire", "transfer",
+    # APIs & Services
+    "api", "api1", "api2", "rest", "graphql", "json", "xml",
+    "webhook", "callback", "notify", "notification",
+    # Development & Testing
+    "dev", "development", "test", "testing", "uat", "staging", "qa", "sandbox",
+    "demo", "pre", "beta", "alpha", "canary", "prod",
+    # Infrastructure
+    "app", "web", "server", "service", "services", "cloud", "infrastructure",
+    "cdn", "edge", "cache", "load", "lb", "proxy",
+    "db", "database", "sql", "mongo", "redis", "elastic",
+    "storage", "s3", "blob", "file", "backup",
+    # Monitoring & Operations
+    "monitoring", "monitor", "metrics", "logs", "logging", "analytics",
+    "status", "health", "heartbeat", "ping", "uptime",
+    # Mobile & Client Access
+    "mobile", "app", "client", "android", "ios", "iphone", "ipad",
+    "desktop", "web-app", "spa", "pwa",
+    # Special Infrastructure
+    "mail1", "mail2", "mail-server", "smtp-server", "pop-server",
+    "dns", "ns", "ns1", "ns2", "nameserver", "bind",
+    "dhcp", "ldap", "ad", "activedirectory", "directory",
+    # PQC & Cryptography Infrastructure
+    "pqc", "kyber", "dilithium", "falcon", "sphincs", "ntru", "lattice",
+    "crypto", "cryptography", "encryption", "decryption", "signing",
+    # Additional Critical Services
+    "compliance", "audit", "legal", "hr", "finance", "treasury",
+    "risk", "security", "infosec", "ciso", "soc", "incident",
+    "backup", "disaster", "recovery", "dr", "bc",
+    # Legacy & Deprecated
+    "legacy", "old", "archive", "historical", "deprecated",
+    # Third-party integrations
+    "partner", "partners", "vendor", "vendors", "supplier", "suppliers",
+    "integration", "connect", "sync", "sync-service",
 ]
 
 VPN_CANDIDATE_PREFIXES = ["vpn", "ipsec", "remote", "gateway", "securevpn"]
@@ -136,6 +151,16 @@ HIGH_VALUE_PREFIXES: list[str] = [
     "ckyc",
     "fip",
     "fiu",
+    "swift",
+    "admin",
+    "pqc",
+    "crypto",
+    "kms",
+    "hsm",
+    "pki",
+    "cert",
+    "payment",
+    "banking",
 ]
 
 _LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
